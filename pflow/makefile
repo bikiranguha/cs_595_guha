@@ -17,6 +17,10 @@ include ${PETSC_DIR}/lib/petsc/conf/rules
 pf: $(OBJECTS_PF) chkopts
 	-${CLINKER} -o pf $(OBJECTS_PF) ${PETSC_SNES_LIB}
 	${RM} $(OBJECTS_PF)
+	
+pf_cs595: $(OBJECTS_PF) chkopts
+	-${CLINKER} -o pf_cs595 $(OBJECTS_PF) ${PETSC_SNES_LIB}
+	${RM} $(OBJECTS_PF)
 
 #--------------------------------------------------------------------------
 runpf:

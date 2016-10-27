@@ -63,10 +63,10 @@ PetscErrorCode FormFunction(SNES snes,Vec X, Vec F,void *appctx) // Q: Why is it
   ierr = VecGetArrayRead(localX,&xarr);CHKERRQ(ierr); // Q: What is the difference between VecGetArray and VecGetArrayRead? Also, how do they work?
   ierr = VecGetArray(localF,&farr);CHKERRQ(ierr);
 
-  ierr = DMNetworkGetVertexRange(networkdm,&vStart,&vEnd);CHKERRQ(ierr); // Q: Vertices may be buses. Need to confirm.
+  ierr = DMNetworkGetVertexRange(networkdm,&vStart,&vEnd);CHKERRQ(ierr); 
   ierr = DMNetworkGetComponentDataArray(networkdm,&arr);CHKERRQ(ierr); // Q: What is now inside arr? 
 
-  for (v=vStart; v < vEnd; v++) { // Probably the local buses
+  for (v=vStart; v < vEnd; v++) { // Vertices contain all the info about each component (bus, generator, branch and load)
     PetscInt    i,j,offsetd,key;
     PetscScalar Vm;
     PetscScalar Sbase=User->Sbase;
@@ -449,13 +449,13 @@ int main(int argc,char ** argv)
     /* Only rank 0 reads the data */
     ierr = PetscOptionsGetString(NULL,NULL,"-pfdata",pfdata_file,PETSC_MAX_PATH_LEN-1,NULL);CHKERRQ(ierr);
     ierr = PetscNew(&pfdata);CHKERRQ(ierr);
-    ierr = PFReadMatPowerData(pfdata,pfdata_file);CHKERRQ(ierr);
+    ierr = PFReadMatPowerData(pfdata,pfdata_file);CHKERRQ(ierr);  // The strtucture pfdata reads the input of the case file
     User.Sbase = pfdata->sbase;
 
     numEdges = pfdata->nbranch;
     numVertices = pfdata->nbus;
 
-    ierr = PetscMalloc(2*numEdges*sizeof(int),&edges);CHKERRQ(ierr);
+    ierr = PetscMalloc(2*numEdges*sizeof(int),&edges);CHKERRQ(ierr); // Q: Why allocate '2'*numEdges into the 'edges' structure?
     ierr = GetListofEdges(pfdata->nbranch,pfdata->branch,edges);CHKERRQ(ierr);
   }
   PetscLogStagePop();
