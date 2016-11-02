@@ -46,11 +46,10 @@ PetscErrorCode FormFunction(SNES snes,Vec X, Vec F,void *appctx) // Q: Why is it
   const PetscScalar *xarr;
   PetscScalar   *farr;
   PetscInt      offsetfrom,offsetto,offset;
-  DMNetworkComponentGenericDataType *arr; // Q: Is array a vector or a matrix?
-
+  DMNetworkComponentGenericDataType *arr; // arr is a pointer to the start of the local array of data components.  
   PetscFunctionBegin;
   ierr = SNESGetDM(snes,&networkdm);CHKERRQ(ierr);
-  ierr = DMGetLocalVector(networkdm,&localX);CHKERRQ(ierr); // Q: How does networkdm look like? Is it a structure? How to know which global vector is localized here? Also what is X?
+  ierr = DMGetLocalVector(networkdm,&localX);CHKERRQ(ierr); 
   ierr = DMGetLocalVector(networkdm,&localF);CHKERRQ(ierr);
   ierr = VecSet(F,0.0);CHKERRQ(ierr);
 
@@ -60,8 +59,8 @@ PetscErrorCode FormFunction(SNES snes,Vec X, Vec F,void *appctx) // Q: Why is it
   ierr = DMGlobalToLocalBegin(networkdm,F,INSERT_VALUES,localF);CHKERRQ(ierr);
   ierr = DMGlobalToLocalEnd(networkdm,F,INSERT_VALUES,localF);CHKERRQ(ierr);
 
-  ierr = VecGetArrayRead(localX,&xarr);CHKERRQ(ierr); // Q: What is the difference between VecGetArray and VecGetArrayRead? Also, how do they work?
-  ierr = VecGetArray(localF,&farr);CHKERRQ(ierr);
+  ierr = VecGetArrayRead(localX,&xarr);CHKERRQ(ierr); // xarr is a pointer to localX, to access its contents using xarr[n]. 
+  ierr = VecGetArray(localF,&farr);CHKERRQ(ierr);     // In VecGetArray, you can modify contents of the vector, in VecGetArrayRead, you cannot modify.
 
   ierr = DMNetworkGetVertexRange(networkdm,&vStart,&vEnd);CHKERRQ(ierr); 
   ierr = DMNetworkGetComponentDataArray(networkdm,&arr);CHKERRQ(ierr); // Q: What is now inside arr? 
@@ -98,7 +97,7 @@ PetscErrorCode FormFunction(SNES snes,Vec X, Vec F,void *appctx) // Q: Why is it
 
 	  /* Shunt injections, account for any shunt elements */
 	  farr[offset] += Vm*Vm*bus->gl/Sbase; 
-	  if(bus->ide != PV_BUS) farr[offset+1] += -Vm*Vm*bus->bl/Sbase;
+	  if(bus->ide != PV_BUS) farr[offset+1] += -Vm*Vm*bus->bl/Sbase; // Q: Why not for a PV bus?
 	}
 
 	ierr = DMNetworkGetSupportingEdges(networkdm,v,&nconnedges,&connedges);CHKERRQ(ierr);  // nconnedges: no. of branches connected to the bus, connedges: list of branches
