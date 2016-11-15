@@ -4,7 +4,7 @@ FFLAGS	        =
 CPPFLAGS        =
 FPPFLAGS        =
 LOCDIR          = src/ts/examples/tutorials/power_grid/stability_9bus/
-EXAMPLESC       = ex9bus.c ex9busadj.c ex9busopt.c ex9busopt_fd.c
+EXAMPLESC       =  9bus_dm1.c 9bus_dm.c ex9bus.c ex9busadj.c ex9busopt.c ex9busopt_fd.c
 EXAMPLESF       =
 EXAMPLESFH      =
 MANSEC          = TS
@@ -12,6 +12,15 @@ DIRS            =
 
 include ${PETSC_DIR}/lib/petsc/conf/variables
 include ${PETSC_DIR}/lib/petsc/conf/rules
+
+9bus_dm: 9bus_dm.o  chkopts
+	-${CLINKER} -o 9bus_dm 9bus_dm.o  ${PETSC_TS_LIB}
+	${RM} 9bus_dm.o
+	
+9bus_dm1: 9bus_dm1.o  chkopts
+	-${CLINKER} -o 9bus_dm1 9bus_dm1.o  ${PETSC_TS_LIB}
+	${RM} 9bus_dm1.o
+
 
 ex9bus: ex9bus.o  chkopts
 	-${CLINKER} -o ex9bus ex9bus.o  ${PETSC_TS_LIB}

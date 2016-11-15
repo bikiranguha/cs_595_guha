@@ -413,7 +413,7 @@ PetscErrorCode SetInitialValues(DM networkdm,Vec X,void* appctx)
 int main(int argc,char ** argv)
 {
   PetscErrorCode ierr;
-  char           pfdata_file[PETSC_MAX_PATH_LEN]="datafiles/case13659pegase.m";
+  char           pfdata_file[PETSC_MAX_PATH_LEN]="datafiles/case9.m";
   PFDATA         *pfdata;
   PetscInt       numEdges=0,numVertices=0;
   int            *edges = NULL;

@@ -6,10 +6,14 @@
 #-snes_type ls
 -snes_linesearch_type basic
 -pc_type lu
+#-pc_type bjacobi
 -pc_factor_mat_ordering_type qmd
 -snes_atol 1e-8
 -snes_rtol 1e-8
 #-alg_snes_type ls
 -alg_snes_linesearch_type basic
 -alg_pc_type lu
+#-alg_pc_type bjacobi
 -alg_pc_factor_mat_ordering_type qmd
+#-alg_snes_atol 1e-8
+-alg_pc_factor_shift_type NONZERO
