@@ -975,7 +975,7 @@ int main(int argc,char **argv)
 
   ierr = MatAssemblyBegin(user.Ybus,MAT_FINAL_ASSEMBLY);CHKERRQ(ierr);
   ierr = MatAssemblyEnd(user.Ybus,MAT_FINAL_ASSEMBLY);CHKERRQ(ierr);
-  MatView(J,PETSC_VIEWER_STDOUT_WORLD);
+ // MatView(J,PETSC_VIEWER_STDOUT_WORLD);
 
   user.alg_flg = PETSC_TRUE;
   /* Solve the algebraic equations */
@@ -1001,7 +1001,7 @@ int main(int argc,char **argv)
   user.alg_flg = PETSC_FALSE;
 
   ierr = TSSolve(ts,X);CHKERRQ(ierr);
-  VecView(X,PETSC_VIEWER_STDOUT_WORLD);
+ // VecView(X,PETSC_VIEWER_STDOUT_WORLD);
 
   /* Remove the fault */
   row_loc = 2*user.faultbus; col_loc = 2*user.faultbus+1;
@@ -1020,7 +1020,7 @@ int main(int argc,char **argv)
 
   /* Solve the algebraic equations */
   ierr = SNESSolve(snes_alg,NULL,X);CHKERRQ(ierr);
-  
+  VecView(X,PETSC_VIEWER_STDOUT_WORLD);
 
   /* Save tfault off solution */
   idx      = user.stepnum*(user.neqs_pgrid+1);

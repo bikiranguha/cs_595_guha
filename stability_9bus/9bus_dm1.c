@@ -574,11 +574,11 @@ PetscErrorCode ri2dq(PetscScalar Fr,PetscScalar Fi,PetscScalar delta,PetscScalar
 	  
 	  
 	  
-	  // if (user->alg_flg == PETSC_TRUE){
+	  if (user->alg_flg == PETSC_TRUE){
 		  
-		  // Yffr += user->ybusfault[bus->id*2+1];
-		  // Yffi += user->ybusfault[bus->id*2];
-	  // }
+		  Yffr += user->ybusfault[bus->id*2+1];
+		  Yffi += user->ybusfault[bus->id*2];
+	  }
 	  
 	  Vr0 = bus->vr;
 	  Vi0 = bus->vi;
@@ -893,10 +893,20 @@ PetscErrorCode AlgFunction (SNES snes, Vec X, Vec F, void *ctx) // the last argu
 	if (!ghostvtex) { // Calculate current due to diagonal elements in Ybus
 	  Vr = xarr[offset];
 	  Vi= xarr[offset+1];
-	  Yffr = bus->yff[1]+ user->ybusfault[bus->id*2+1];
-	  Yffi = bus->yff[0]+ user->ybusfault[bus->id*2];
-	  //Yffr = bus->yff[1];
-	  //Yffi = bus->yff[0];
+	  
+	   Yffr = bus->yff[1];
+	   Yffi = bus->yff[0];
+	  
+	  if (user->alg_flg == PETSC_TRUE){
+	  
+	  Yffr += user->ybusfault[bus->id*2+1];
+	  Yffi += user->ybusfault[bus->id*2];	  
+	  }
+	  
+	  
+	  
+	  
+	
 	  Vr0 = bus->vr;   // have used these values in the load model
 	  Vi0 = bus->vi;
 	  
@@ -1325,7 +1335,7 @@ int main(int argc,char ** argv)
   //ierr = TSSetEquationType(ts,TS_EQ_DAE_IMPLICIT_INDEX1);CHKERRQ(ierr);
   //ierr = TSARKIMEXSetFullyImplicit(ts,PETSC_TRUE);CHKERRQ(ierr);
   //ierr = TSSetSolution(ts,x);CHKERRQ(ierr);
-  
+  ierr = TSSetApplicationContext(ts,&user);CHKERRQ(ierr);
   ierr = TSSetType(ts,TSBEULER);CHKERRQ(ierr);
   ierr = TSSetIFunction(ts,NULL, (TSIFunction) FormIFunction,&user);CHKERRQ(ierr);
    //VecView(F,PETSC_VIEWER_STDOUT_WORLD);
@@ -1337,18 +1347,6 @@ int main(int argc,char ** argv)
   ierr = TSSetFromOptions(ts);CHKERRQ(ierr);
   //ierr = TSSetPostStep(ts,SaveSolution);CHKERRQ(ierr);// do the save solution
 
-  // if(user.setisdiff) {
-    // const PetscInt *idx;
-    // PetscScalar *vatoli;
-    // PetscInt k;
- //Create vector of absolute tolerances and set the algebraic part to infinity
-    // ierr = VecDuplicate(X,&vatol);CHKERRQ(ierr);
-    // ierr = VecSet(X,100000.0);CHKERRQ(ierr);
-    // ierr = VecGetArray(vatol,&vatoli);CHKERRQ(ierr);
-    // ierr = ISGetIndices(user.is_diff,&idx);
-    // for(k=0; k < 7*ngen; k++) vatoli[idx[k]] = 1e-2;
-    // ierr = VecRestoreArray(vatol,&vatoli);CHKERRQ(ierr);
-  // }
   
   user.alg_flg = PETSC_FALSE;
   /* Prefault period */
@@ -1386,7 +1384,44 @@ int main(int argc,char ** argv)
   user.alg_flg = PETSC_TRUE;
   /* Solve the algebraic equations */
   ierr = SNESSolve(snes_alg,NULL,X);CHKERRQ(ierr);
+  //VecView(X,PETSC_VIEWER_STDOUT_WORLD);
+  
+  
+  
+  
+  /* Disturbance period */
+  ierr = TSSetDuration(ts,1000,user.tfaultoff);CHKERRQ(ierr);
+  ierr = TSSetExactFinalTime(ts,TS_EXACTFINALTIME_STEPOVER);CHKERRQ(ierr);
+  ierr = TSSetInitialTimeStep(ts,user.tfaulton,.01);CHKERRQ(ierr);
+  ierr = TSSetIFunction(ts,NULL, (TSIFunction) FormIFunction,&user);CHKERRQ(ierr);
+
+  user.alg_flg = PETSC_TRUE;
+
+  ierr = TSSolve(ts,X);CHKERRQ(ierr);
+  //VecView(X,PETSC_VIEWER_STDOUT_WORLD);
+  
+  
+  
+  
+  /* Remove the fault */
+
+  ierr = SNESSetFunction(snes_alg,F_alg,AlgFunction,&user);CHKERRQ(ierr);
+ //ierr = MatZeroEntries(J);CHKERRQ(ierr);
+ //ierr = SNESSetJacobian(snes_alg,J,J,AlgJacobian,&user);CHKERRQ(ierr);
+  ierr = SNESSetOptionsPrefix(snes_alg,"alg_");CHKERRQ(ierr);
+  ierr = SNESSetFromOptions(snes_alg);CHKERRQ(ierr);
+  
+
+
+  user.alg_flg = PETSC_FALSE;
+  /* Solve the algebraic equations */
+  ierr = SNESSolve(snes_alg,NULL,X);CHKERRQ(ierr);
   VecView(X,PETSC_VIEWER_STDOUT_WORLD);
+  
+  
+  
+  
+  
 
   
    ierr = VecDestroy(&F_alg);CHKERRQ(ierr);
