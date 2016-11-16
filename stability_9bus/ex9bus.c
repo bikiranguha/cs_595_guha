@@ -1020,7 +1020,7 @@ int main(int argc,char **argv)
 
   /* Solve the algebraic equations */
   ierr = SNESSolve(snes_alg,NULL,X);CHKERRQ(ierr);
-  VecView(X,PETSC_VIEWER_STDOUT_WORLD);
+  //VecView(X,PETSC_VIEWER_STDOUT_WORLD);
 
   /* Save tfault off solution */
   idx      = user.stepnum*(user.neqs_pgrid+1);
@@ -1040,6 +1040,7 @@ int main(int argc,char **argv)
   user.alg_flg = PETSC_TRUE;
 
   ierr = TSSolve(ts,X);CHKERRQ(ierr);
+  VecView(X,PETSC_VIEWER_STDOUT_WORLD);
 
   ierr = MatAssemblyBegin(user.Sol,MAT_FINAL_ASSEMBLY);CHKERRQ(ierr);
   ierr = MatAssemblyEnd(user.Sol,MAT_FINAL_ASSEMBLY);CHKERRQ(ierr);

@@ -496,8 +496,8 @@ PetscErrorCode ri2dq(PetscScalar Fr,PetscScalar Fi,PetscScalar delta,PetscScalar
   //PipeField      *pipex,*pipexdot,*pipef;
   // DMDALocalInfo  info;
  // Junction       junction;
-  MPI_Comm       comm;
-  PetscMPIInt    rank,size;
+  //MPI_Comm       comm;
+  //PetscMPIInt    rank,size;
   const PetscScalar *xarr,*xdotarr;
   DMNetworkComponentGenericDataType *arr;
   PetscScalar    Vd,Vq,SE;
@@ -505,9 +505,9 @@ PetscErrorCode ri2dq(PetscScalar Fr,PetscScalar Fi,PetscScalar delta,PetscScalar
     
 	
   PetscFunctionBegin;
-  ierr = PetscObjectGetComm((PetscObject)ts,&comm);CHKERRQ(ierr);
-  ierr = MPI_Comm_rank(comm,&rank);CHKERRQ(ierr); 
-  ierr = MPI_Comm_size(comm,&size);CHKERRQ(ierr); 
+  // ierr = PetscObjectGetComm((PetscObject)ts,&comm);CHKERRQ(ierr);
+  // ierr = MPI_Comm_rank(comm,&rank);CHKERRQ(ierr); 
+  // ierr = MPI_Comm_size(comm,&size);CHKERRQ(ierr); 
  
   ierr = VecSet(F,0.0);CHKERRQ(ierr);
   
@@ -830,16 +830,16 @@ PetscErrorCode AlgFunction (SNES snes, Vec X, Vec F, void *ctx) // the last argu
  
   //DMDALocalInfo  info;
  
-  MPI_Comm       comm;
-  PetscMPIInt    rank,size;
+  // MPI_Comm       comm;
+  // PetscMPIInt    rank,size;
   const PetscScalar *xarr;
   DMNetworkComponentGenericDataType *arr;
     
 	
   PetscFunctionBegin;
-  ierr = PetscObjectGetComm((PetscObject) snes,&comm);CHKERRQ(ierr);
-  ierr = MPI_Comm_rank(comm,&rank);CHKERRQ(ierr); 
-  ierr = MPI_Comm_size(comm,&size);CHKERRQ(ierr); 
+  // ierr = PetscObjectGetComm((PetscObject) snes,&comm);CHKERRQ(ierr);
+  // ierr = MPI_Comm_rank(comm,&rank);CHKERRQ(ierr); 
+  // ierr = MPI_Comm_size(comm,&size);CHKERRQ(ierr); 
  
   ierr = VecSet(F,0.0);CHKERRQ(ierr);
   
@@ -1416,8 +1416,21 @@ int main(int argc,char ** argv)
   user.alg_flg = PETSC_FALSE;
   /* Solve the algebraic equations */
   ierr = SNESSolve(snes_alg,NULL,X);CHKERRQ(ierr);
-  VecView(X,PETSC_VIEWER_STDOUT_WORLD);
+  //VecView(X,PETSC_VIEWER_STDOUT_WORLD);
   
+  
+  
+  
+  /* Post-disturbance period */
+  ierr = TSSetDuration(ts,1000,user.tmax);CHKERRQ(ierr);
+  ierr = TSSetExactFinalTime(ts,TS_EXACTFINALTIME_STEPOVER);CHKERRQ(ierr);
+  ierr = TSSetInitialTimeStep(ts,user.tfaultoff,.01);CHKERRQ(ierr);
+  ierr = TSSetIFunction(ts,NULL, (TSIFunction) FormIFunction,&user);CHKERRQ(ierr);
+
+  user.alg_flg = PETSC_FALSE;
+
+  ierr = TSSolve(ts,X);CHKERRQ(ierr);
+  VecView(X,PETSC_VIEWER_STDOUT_WORLD);
   
   
   
