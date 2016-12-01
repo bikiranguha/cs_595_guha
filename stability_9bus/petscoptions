@@ -16,4 +16,11 @@
 #-alg_pc_type bjacobi
 -alg_pc_factor_mat_ordering_type qmd
 #-alg_snes_atol 1e-8
--alg_pc_factor_shift_type NONZERO
+#-pc_factor_shift_type NONZERO
+#-alg_pc_factor_shift_type NONZERO
+#-alg_pc_factor_mat_solver_package superlu_dist
+
+
+-alg_pc_type bjacobi # Required for parallel computation
+-alg_sub_pc_type lu
+-alg_sub_pc_factor_shift_type NONZERO

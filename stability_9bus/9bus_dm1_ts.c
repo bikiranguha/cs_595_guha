@@ -358,7 +358,7 @@ PetscErrorCode SetInitialGuess(DM networkdm, Vec X, Vec V0)
   DMNetworkComponentGenericDataType *arr;
   //PetscInt       i ;
   PetscInt		 idx=0;
-  PetscScalar    Vr=0,Vi=0,IGr,IGi,Vm,Vm2;
+  PetscScalar    Vr,Vi,IGr,IGi,Vm,Vm2;
   PetscScalar    Eqp,Edp,delta;
   PetscScalar    Efd,RF,VR; /* Exciter variables */
   PetscScalar    Id,Iq;  /* Generator dq axis currents */
@@ -541,7 +541,7 @@ PetscErrorCode ri2dq(PetscScalar Fr,PetscScalar Fi,PetscScalar delta,PetscScalar
     PetscInt    numComps;
 	PetscScalar Yffr, Yffi;
 	PetscScalar   Vm, Vm2,Vm0;
-	PetscScalar  Vr0=0, Vi0=0;
+	PetscScalar  Vr0, Vi0;
 	PetscScalar  PD,QD;
 
     ierr = DMNetworkIsGhostVertex(networkdm,v,&ghostvtex);CHKERRQ(ierr);  // Ghost vertices may be buses belonging to other processors whose info is needed by the local processor.
@@ -869,7 +869,7 @@ PetscErrorCode AlgFunction (SNES snes, Vec X, Vec F, void *ctx) // the last argu
     PetscInt    numComps;
 	PetscScalar Yffr, Yffi;
 	PetscScalar   Vm, Vm2,Vm0;
-	PetscScalar  Vr0=0, Vi0=0;
+	PetscScalar  Vr0, Vi0;
 	PetscScalar  PD,QD;
 
     ierr = DMNetworkIsGhostVertex(networkdm,v,&ghostvtex);CHKERRQ(ierr);  // Ghost vertices may be buses belonging to other processors whose info is needed by the local processor.
@@ -1149,6 +1149,7 @@ int main(int argc,char ** argv)
   PetscViewer    Xview,Ybusview;
   // PetscInt       i,idx,*idx2,row_loc,col_loc;
   // PetscScalar    *x,*mat,val,*amat;
+  Vec            vatol;
    Mat         Ybus; /* Network admittance matrix */
    Bus        *bus;
    Branch     *branch;
@@ -1269,15 +1270,11 @@ int main(int argc,char ** argv)
   
   ierr = DMSetUp(networkdm);CHKERRQ(ierr);
   
-  
-  
-  
   if (!rank) {
-	ierr = PetscFree4(bus,gen,load,branch);CHKERRQ(ierr);
-    // ierr = PetscFree(bus);CHKERRQ(ierr);
-    // ierr = PetscFree(gen);CHKERRQ(ierr);
-    // ierr = PetscFree(branch);CHKERRQ(ierr);
-    // ierr = PetscFree(load);CHKERRQ(ierr);
+    ierr = PetscFree(bus);CHKERRQ(ierr);
+    ierr = PetscFree(gen);CHKERRQ(ierr);
+    ierr = PetscFree(branch);CHKERRQ(ierr);
+    ierr = PetscFree(load);CHKERRQ(ierr);
     //ierr = PetscFree(pfdata);CHKERRQ(ierr);
     //I have already created DM, so the above are not useful any longer.
   }
@@ -1364,18 +1361,24 @@ int main(int argc,char ** argv)
      variables are held constant by setting their residuals to 0 and
      putting a 1 on the Jacobian diagonal for xgen rows
   */
+  user.alg_flg = PETSC_TRUE;
+ ierr = TSSetDuration(ts,1000,user.tfaulton+ 0.01);CHKERRQ(ierr);
+  ierr = TSSetExactFinalTime(ts,TS_EXACTFINALTIME_STEPOVER);CHKERRQ(ierr);
+  ierr = TSSetInitialTimeStep(ts,user.tfaulton,0.01);CHKERRQ(ierr);
+  ierr = TSSetFromOptions(ts);CHKERRQ(ierr);
+  //ierr = TSSetPostStep(ts,SaveSolution);CHKERRQ(ierr);// do the save solution
 
- 
   
+  user.alg_flg = PETSC_TRUE;
+  /* Prefault period */
+   ierr = TSSolve(ts,X);CHKERRQ(ierr);
+   VecView(X,PETSC_VIEWER_STDOUT_WORLD); 
   
-  ierr = VecDuplicate(X,&F_alg);CHKERRQ(ierr);
-   ierr = TSGetSNES(ts,&snes_alg);CHKERRQ(ierr);
-  //ierr = SNESCreate(PETSC_COMM_WORLD,&snes_alg);CHKERRQ(ierr);
-   ierr = SNESSetFunction(snes_alg,F_alg,AlgFunction,&user);CHKERRQ(ierr);
- //ierr = MatZeroEntries(J);CHKERRQ(ierr);
- //ierr = SNESSetJacobian(snes_alg,J,J,AlgJacobian,&user);CHKERRQ(ierr);
-  ierr = SNESSetOptionsPrefix(snes_alg,"alg_");CHKERRQ(ierr);
-  ierr = SNESSetFromOptions(snes_alg);CHKERRQ(ierr);
+  // ierr = VecDuplicate(X,&F_alg);CHKERRQ(ierr);
+   // ierr = TSGetSNES(ts,&snes_alg);CHKERRQ(ierr);
+   // ierr = SNESSetFunction(snes_alg,F_alg,AlgFunction,&user);CHKERRQ(ierr);
+  // ierr = SNESSetOptionsPrefix(snes_alg,"alg_");CHKERRQ(ierr);
+  // ierr = SNESSetFromOptions(snes_alg);CHKERRQ(ierr);
   
   
   
@@ -1384,10 +1387,10 @@ int main(int argc,char ** argv)
      in the Ybus matrix */
 
 
-  user.alg_flg = PETSC_TRUE;
-  /* Solve the algebraic equations */
-  ierr = SNESSolve(snes_alg,NULL,X);CHKERRQ(ierr);
-  //VecView(X,PETSC_VIEWER_STDOUT_WORLD);
+  // user.alg_flg = PETSC_TRUE;
+  // /* Solve the algebraic equations */
+  // ierr = SNESSolve(snes_alg,NULL,X);CHKERRQ(ierr);
+  // VecView(X,PETSC_VIEWER_STDOUT_WORLD);
   
   
   
@@ -1433,7 +1436,12 @@ int main(int argc,char ** argv)
   user.alg_flg = PETSC_FALSE;
 
   ierr = TSSolve(ts,X);CHKERRQ(ierr);
-  //VecView(X,PETSC_VIEWER_STDOUT_WORLD);
+  VecView(X,PETSC_VIEWER_STDOUT_WORLD);
+  
+  
+  
+  
+
   
    ierr = VecDestroy(&F_alg);CHKERRQ(ierr);
    ierr = VecDestroy(&X);CHKERRQ(ierr);

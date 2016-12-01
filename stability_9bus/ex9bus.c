@@ -826,6 +826,7 @@ int main(int argc,char **argv)
     idx2[7*i+4] = 9*i+6; idx2[7*i+5] = 9*i+7; idx2[7*i+6] = 9*i+8;
   }
   ierr = ISCreateGeneral(PETSC_COMM_WORLD,7*ngen,idx2,PETSC_COPY_VALUES,&user.is_diff);CHKERRQ(ierr);
+  //ierr = ISView(&user->is_diff,PETSC_VIEWER_STDOUT_SELF);CHKERRQ(ierr);
   ierr = ISComplement(user.is_diff,0,user.neqs_pgrid,&user.is_alg);CHKERRQ(ierr);
   ierr = PetscFree(idx2);CHKERRQ(ierr);
 
@@ -980,7 +981,7 @@ int main(int argc,char **argv)
   user.alg_flg = PETSC_TRUE;
   /* Solve the algebraic equations */
   ierr = SNESSolve(snes_alg,NULL,X);CHKERRQ(ierr);
-  //VecView(X,PETSC_VIEWER_STDOUT_WORLD);
+  VecView(X,PETSC_VIEWER_STDOUT_WORLD);
   //MatView(J,PETSC_VIEWER_STDOUT_WORLD);
 
   /* Save fault-on solution */

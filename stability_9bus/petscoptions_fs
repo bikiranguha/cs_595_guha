@@ -1,0 +1,46 @@
+-ts_type cn
+#-ts_arkimex_type 2e
+-ts_exact_final_time MATCHSTEP
+-ts_theta_endpoint
+#-ts_monitor
+#-snes_type ls
+-snes_linesearch_type basic
+#-pc_type lu
+#-pc_type bjacobi
+#-pc_factor_mat_ordering_type qmd
+-fieldsplit_differential_pc_factor_mat_ordering_type qmd
+-fieldsplit_algebraic_pc_factor_mat_ordering_type qmd
+-snes_atol 1e-8
+-snes_rtol 1e-8
+#-alg_snes_type ls
+-alg_snes_linesearch_type basic
+#-alg_pc_type lu
+#-alg_pc_type bjacobi
+#-alg_pc_factor_mat_ordering_type qmd
+#-alg_snes_atol 1e-8
+#-alg_pc_factor_shift_type NONZERO
+-fieldsplit_differential_pc_factor_shift_type NONZERO
+#-fieldsplit_algebraic_pc_type lu
+#-fieldsplit_differential_pc_type lu
+-fieldsplit_differential_pc_factor_mat_solver_package superlu_dist
+-fieldsplit_algebraic_pc_factor_mat_solver_package superlu_dist
+
+# fieldsplit algebraic options
+#------------------------------------
+#-fieldsplit_algebraic_pc_type lu
+#-alg_fieldsplit_algebraic_pc_type lu
+#-initsol_fieldsplit_junction_ksp_type preonly 
+#-initsol_fieldsplit_junction_pc_factor_mat_solver_package mumps
+#-alg_fieldsplit_algebraic_pc_factor_shift_type NONZERO#It doesn't matter.For case 2, the rows corresponding to algebraic equations are nonzero row vectors.
+# mumps detects null pivots, then fixes it (see mumps manual)
+#-initsol_fieldsplit_Junction_mat_mumps_icntl_24 1
+#-initsol_fieldsplit_Junction_mat_mumps_cntl_5 1.e20
+
+# fieldsplit differential options
+#------------------------------------
+#-fieldsplit_differential_pc_type bjacobi
+#-alg_fieldsplit_differential_pc_type lu
+#-alg_fieldsplit_differential_pc_factor_shift_type NONZERO#This is important. For case 2, the rows corresponding to dynamic equations are zero row vectors. This command make
+#diagnal entries 1.
+#-initsol_fieldsplit_pipe_sub_pc_factor_shift_type nonzero
+#-initsol_fieldsplit_Pipe_sub_pc_type ilu

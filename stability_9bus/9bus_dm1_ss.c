@@ -100,6 +100,7 @@ typedef struct {
   PetscScalar Rfault;
   PetscReal   t0,tmax;//t0: initial time,final time
   //PetscInt    neqs_gen,neqs_net,neqs_pgrid; // neqs_gen: No. of gen equations, and so on....
+  PetscInt    neqs_pgrid; // no. of equations in the whole system
   Mat         Sol; /* Matrix to save solution at each time step */
   PetscInt    stepnum;
   PetscBool   alg_flg;
@@ -110,6 +111,33 @@ typedef struct {
   PetscScalar    ybusfault[18];
   
 } Userctx;
+
+
+#undef __FUNCT__
+#define __FUNCT__ "SaveSolution"
+PetscErrorCode SaveSolution(TS ts)
+{
+  PetscErrorCode ierr;
+  Userctx        *user;
+  Vec            X;
+  PetscScalar    *x,*mat;
+  PetscInt       idx;
+  PetscReal      t;
+
+  PetscFunctionBegin;
+  ierr     = TSGetApplicationContext(ts,&user);CHKERRQ(ierr);
+  ierr     = TSGetTime(ts,&t);CHKERRQ(ierr);
+  ierr     = TSGetSolution(ts,&X);CHKERRQ(ierr);
+  idx      = user->stepnum*(user->neqs_pgrid+1);
+  ierr     = MatDenseGetArray(user->Sol,&mat);CHKERRQ(ierr);
+  ierr     = VecGetArray(X,&x);CHKERRQ(ierr);
+  mat[idx] = t;
+  ierr     = PetscMemcpy(mat+idx+1,x,user->neqs_pgrid*sizeof(PetscScalar));CHKERRQ(ierr);
+  ierr     = MatDenseRestoreArray(user->Sol,&mat);CHKERRQ(ierr);
+  ierr     = VecRestoreArray(X,&x);CHKERRQ(ierr);
+  user->stepnum++;
+  PetscFunctionReturn(0);
+}
 
 #undef __FUNCT__
 #define __FUNCT__ "read_data"
@@ -358,7 +386,7 @@ PetscErrorCode SetInitialGuess(DM networkdm, Vec X, Vec V0)
   DMNetworkComponentGenericDataType *arr;
   //PetscInt       i ;
   PetscInt		 idx=0;
-  PetscScalar    Vr=0,Vi=0,IGr,IGi,Vm,Vm2;
+  PetscScalar    Vr=0.0,Vi=0.0,IGr,IGi,Vm,Vm2;
   PetscScalar    Eqp,Edp,delta;
   PetscScalar    Efd,RF,VR; /* Exciter variables */
   PetscScalar    Id,Iq;  /* Generator dq axis currents */
@@ -541,7 +569,7 @@ PetscErrorCode ri2dq(PetscScalar Fr,PetscScalar Fi,PetscScalar delta,PetscScalar
     PetscInt    numComps;
 	PetscScalar Yffr, Yffi;
 	PetscScalar   Vm, Vm2,Vm0;
-	PetscScalar  Vr0=0, Vi0=0;
+	PetscScalar  Vr0=0.0, Vi0=0.0;
 	PetscScalar  PD,QD;
 
     ierr = DMNetworkIsGhostVertex(networkdm,v,&ghostvtex);CHKERRQ(ierr);  // Ghost vertices may be buses belonging to other processors whose info is needed by the local processor.
@@ -861,7 +889,7 @@ PetscErrorCode AlgFunction (SNES snes, Vec X, Vec F, void *ctx) // the last argu
   
   for (v=vStart; v < vEnd; v++) { // Vertices contain all the info about each component (bus, generator, branch and load)
     PetscInt    i,j,offsetd, offset, key;
-    PetscScalar Vr, Vi;
+    PetscScalar Vr=0.0, Vi=0.0;
     Bus         *bus;
     Gen         *gen;
     Load        *load;
@@ -869,7 +897,7 @@ PetscErrorCode AlgFunction (SNES snes, Vec X, Vec F, void *ctx) // the last argu
     PetscInt    numComps;
 	PetscScalar Yffr, Yffi;
 	PetscScalar   Vm, Vm2,Vm0;
-	PetscScalar  Vr0=0, Vi0=0;
+	PetscScalar  Vr0=0.0, Vi0=0.0;
 	PetscScalar  PD,QD;
 
     ierr = DMNetworkIsGhostVertex(networkdm,v,&ghostvtex);CHKERRQ(ierr);  // Ghost vertices may be buses belonging to other processors whose info is needed by the local processor.
@@ -1139,16 +1167,19 @@ int main(int argc,char ** argv)
   PetscInt       i,j,*edgelist= NULL;;  
   // UserCtx        User;
      PetscMPIInt    size,rank;
-     PetscInt       neqs_gen=0,neqs_net=0,neqs_pgrid=0,ngen=0,nbus=0,nbranch=0,nload=0;//
+     PetscInt       neqs_gen=0,neqs_net=0,ngen=0,nbus=0,nbranch=0,nload=0;//
   // PetscInt       eStart, eEnd, vStart, vEnd,j,neqs_gen,neqs_net,neqs_pgrid;//
   Vec            X,F,F_alg,Xdot,V0;//V0: initial real and imaginary voltage of all buses
-  // Mat            J,A;
+   Mat            A;
  //SNES           snes;
    TS                ts;
   SNES           snes_alg;
   PetscViewer    Xview,Ybusview;
+  PetscInt         idx;
   // PetscInt       i,idx,*idx2,row_loc,col_loc;
   // PetscScalar    *x,*mat,val,*amat;
+  //Vec            vatol;
+   PetscScalar    *x,*mat,*amat;
    Mat         Ybus; /* Network admittance matrix */
    Bus        *bus;
    Branch     *branch;
@@ -1163,6 +1194,7 @@ int main(int argc,char ** argv)
    PetscInt       eStart, eEnd, vStart, vEnd;
    PetscInt       genj,loadj;
    PetscInt m=0,n=0;
+   PetscViewer    viewer;
    //PetscReal ftime = 2.0; // Final time to iterate to
    Userctx       user;
    //TSConvergedReason reason;
@@ -1185,7 +1217,7 @@ int main(int argc,char ** argv)
     nload=3;
     neqs_gen   = 9*ngen; /* # eqs. for generator subsystem */
     neqs_net   = 2*nbus; /* # eqs. for network subsystem   */
-    neqs_pgrid = neqs_gen + neqs_net;
+    user.neqs_pgrid = neqs_gen + neqs_net;
   ierr = PetscViewerBinaryOpen(PETSC_COMM_SELF,"X.bin",FILE_MODE_READ,&Xview);CHKERRQ(ierr);
   ierr = PetscViewerBinaryOpen(PETSC_COMM_SELF,"Ybus.bin",FILE_MODE_READ,&Ybusview);CHKERRQ(ierr);
 
@@ -1269,15 +1301,12 @@ int main(int argc,char ** argv)
   
   ierr = DMSetUp(networkdm);CHKERRQ(ierr);
   
-  
-  
-  
   if (!rank) {
 	ierr = PetscFree4(bus,gen,load,branch);CHKERRQ(ierr);
-    // ierr = PetscFree(bus);CHKERRQ(ierr);
-    // ierr = PetscFree(gen);CHKERRQ(ierr);
-    // ierr = PetscFree(branch);CHKERRQ(ierr);
-    // ierr = PetscFree(load);CHKERRQ(ierr);
+    //ierr = PetscFree(bus);CHKERRQ(ierr);
+    //ierr = PetscFree(gen);CHKERRQ(ierr);
+    //ierr = PetscFree(branch);CHKERRQ(ierr);
+    //ierr = PetscFree(load);CHKERRQ(ierr);
     //ierr = PetscFree(pfdata);CHKERRQ(ierr);
     //I have already created DM, so the above are not useful any longer.
   }
@@ -1297,8 +1326,42 @@ int main(int argc,char ** argv)
   ierr = DMCreateGlobalVector(networkdm,&X);CHKERRQ(ierr);
   ierr = DMCreateGlobalVector(networkdm,&Xdot);CHKERRQ(ierr);
   ierr = VecDuplicate(X,&F);CHKERRQ(ierr);
-  ierr = SetInitialGuess(networkdm, X, V0); CHKERRQ(ierr);
+  
+  
+  
+  
+  /* Create matrix to save solutions at each time step */
+  user.stepnum = 0;
+
+  ierr = MatCreateSeqDense(PETSC_COMM_SELF,user.neqs_pgrid+1,1002,NULL,&user.Sol);CHKERRQ(ierr);
+  
+  
+  
+  
+  
+  
+   /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+     Set initial conditions
+   - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */ 
+   ierr = SetInitialGuess(networkdm, X, V0); CHKERRQ(ierr);
   //VecView(X,PETSC_VIEWER_STDOUT_WORLD);
+  
+  /* Save initial solution */
+
+  idx=user.stepnum*(user.neqs_pgrid+1);
+  ierr = MatDenseGetArray(user.Sol,&mat);CHKERRQ(ierr);
+  ierr = VecGetArray(X,&x);CHKERRQ(ierr);
+
+  mat[idx] = 0.0;
+
+  ierr = PetscMemcpy(mat+idx+1,x,user.neqs_pgrid*sizeof(PetscScalar));CHKERRQ(ierr);
+  ierr = MatDenseRestoreArray(user.Sol,&mat);CHKERRQ(ierr);
+  ierr = VecRestoreArray(X,&x);CHKERRQ(ierr);
+  user.stepnum++;
+  
+     /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+    Set fault options
+   - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */ 
   
   ierr = PetscOptionsBegin(PETSC_COMM_WORLD,NULL,"Transient stability fault options","");CHKERRQ(ierr);
   {
@@ -1324,19 +1387,11 @@ int main(int argc,char ** argv)
   ierr = PetscOptionsEnd();CHKERRQ(ierr);
   
 
-  // for (i = 0; i < 18; i++) {
-    // ybusfault[i]=0;
-    // }
-    // ybusfault[user.faultbus*2+1]=1/user.Rfault;
-
   
   /* Setup TS solver                                           */
   /*--------------------------------------------------------*/
   ierr = TSCreate(PETSC_COMM_WORLD,&ts);CHKERRQ(ierr);
    ierr = TSSetDM(ts,(DM)networkdm);CHKERRQ(ierr);
-  //ierr = TSSetProblemType(ts,TS_NONLINEAR);CHKERRQ(ierr);
-  //ierr = TSSetEquationType(ts,TS_EQ_DAE_IMPLICIT_INDEX1);CHKERRQ(ierr);
-  //ierr = TSARKIMEXSetFullyImplicit(ts,PETSC_TRUE);CHKERRQ(ierr);
   //ierr = TSSetSolution(ts,x);CHKERRQ(ierr);
   ierr = TSSetApplicationContext(ts,&user);CHKERRQ(ierr);
   ierr = TSSetType(ts,TSBEULER);CHKERRQ(ierr);
@@ -1348,7 +1403,7 @@ int main(int argc,char ** argv)
   ierr = TSSetExactFinalTime(ts,TS_EXACTFINALTIME_STEPOVER);CHKERRQ(ierr);
   ierr = TSSetInitialTimeStep(ts,0.0,0.01);CHKERRQ(ierr);
   ierr = TSSetFromOptions(ts);CHKERRQ(ierr);
-  //ierr = TSSetPostStep(ts,SaveSolution);CHKERRQ(ierr);// do the save solution
+  ierr = TSSetPostStep(ts,SaveSolution);CHKERRQ(ierr);
 
   
   user.alg_flg = PETSC_FALSE;
@@ -1364,10 +1419,6 @@ int main(int argc,char ** argv)
      variables are held constant by setting their residuals to 0 and
      putting a 1 on the Jacobian diagonal for xgen rows
   */
-
- 
-  
-  
   ierr = VecDuplicate(X,&F_alg);CHKERRQ(ierr);
    ierr = TSGetSNES(ts,&snes_alg);CHKERRQ(ierr);
   //ierr = SNESCreate(PETSC_COMM_WORLD,&snes_alg);CHKERRQ(ierr);
@@ -1389,7 +1440,15 @@ int main(int argc,char ** argv)
   ierr = SNESSolve(snes_alg,NULL,X);CHKERRQ(ierr);
   //VecView(X,PETSC_VIEWER_STDOUT_WORLD);
   
-  
+   /* Save fault-on solution */
+  idx      = user.stepnum*(user.neqs_pgrid+1);
+  ierr     = MatDenseGetArray(user.Sol,&mat);CHKERRQ(ierr);
+  ierr     = VecGetArray(X,&x);CHKERRQ(ierr);
+  mat[idx] = user.tfaulton;
+  ierr     = PetscMemcpy(mat+idx+1,x,user.neqs_pgrid*sizeof(PetscScalar));CHKERRQ(ierr);
+  ierr     = MatDenseRestoreArray(user.Sol,&mat);CHKERRQ(ierr);
+  ierr     = VecRestoreArray(X,&x);CHKERRQ(ierr);
+  user.stepnum++;
   
   
   /* Disturbance period */
@@ -1397,6 +1456,7 @@ int main(int argc,char ** argv)
   ierr = TSSetExactFinalTime(ts,TS_EXACTFINALTIME_STEPOVER);CHKERRQ(ierr);
   ierr = TSSetInitialTimeStep(ts,user.tfaulton,.01);CHKERRQ(ierr);
   ierr = TSSetIFunction(ts,NULL, (TSIFunction) FormIFunction,&user);CHKERRQ(ierr);
+  ierr = TSSetPostStep(ts,SaveSolution);CHKERRQ(ierr);
 
   user.alg_flg = PETSC_TRUE;
 
@@ -1421,6 +1481,16 @@ int main(int argc,char ** argv)
   ierr = SNESSolve(snes_alg,NULL,X);CHKERRQ(ierr);
   //VecView(X,PETSC_VIEWER_STDOUT_WORLD);
   
+  /* Save tfault off solution */
+  idx      = user.stepnum*(user.neqs_pgrid+1);
+  ierr     = MatDenseGetArray(user.Sol,&mat);CHKERRQ(ierr);
+  ierr     = VecGetArray(X,&x);CHKERRQ(ierr);
+  mat[idx] = user.tfaultoff;
+  ierr     = PetscMemcpy(mat+idx+1,x,user.neqs_pgrid*sizeof(PetscScalar));CHKERRQ(ierr);
+  ierr     = MatDenseRestoreArray(user.Sol,&mat);CHKERRQ(ierr);
+  ierr     = VecRestoreArray(X,&x);CHKERRQ(ierr);
+  user.stepnum++;
+  
   
   
   
@@ -1429,12 +1499,32 @@ int main(int argc,char ** argv)
   ierr = TSSetExactFinalTime(ts,TS_EXACTFINALTIME_STEPOVER);CHKERRQ(ierr);
   ierr = TSSetInitialTimeStep(ts,user.tfaultoff,.01);CHKERRQ(ierr);
   ierr = TSSetIFunction(ts,NULL, (TSIFunction) FormIFunction,&user);CHKERRQ(ierr);
+  ierr = TSSetPostStep(ts,SaveSolution);CHKERRQ(ierr);
 
   user.alg_flg = PETSC_FALSE;
 
   ierr = TSSolve(ts,X);CHKERRQ(ierr);
-  //VecView(X,PETSC_VIEWER_STDOUT_WORLD);
+  VecView(X,PETSC_VIEWER_STDOUT_WORLD);
   
+  
+  /* Related to saving the output and destroying everything */
+  
+  ierr = MatAssemblyBegin(user.Sol,MAT_FINAL_ASSEMBLY);CHKERRQ(ierr);
+  ierr = MatAssemblyEnd(user.Sol,MAT_FINAL_ASSEMBLY);CHKERRQ(ierr);
+
+  ierr = MatCreateSeqDense(PETSC_COMM_SELF,user.neqs_pgrid+1,user.stepnum,NULL,&A);CHKERRQ(ierr);
+  ierr = MatDenseGetArray(user.Sol,&mat);CHKERRQ(ierr);
+  ierr = MatDenseGetArray(A,&amat);CHKERRQ(ierr);
+  ierr = PetscMemcpy(amat,mat,(user.stepnum*(user.neqs_pgrid+1))*sizeof(PetscScalar));CHKERRQ(ierr);
+  ierr = MatDenseRestoreArray(A,&amat);CHKERRQ(ierr);
+  ierr = MatDenseRestoreArray(user.Sol,&mat);CHKERRQ(ierr);
+  ierr = PetscViewerBinaryOpen(PETSC_COMM_SELF,"out_dm1.bin",FILE_MODE_WRITE,&viewer);CHKERRQ(ierr);
+  ierr = MatView(A,viewer);CHKERRQ(ierr);
+  ierr = PetscViewerDestroy(&viewer);CHKERRQ(ierr);
+  ierr = MatDestroy(&A);CHKERRQ(ierr);
+  ierr = MatDestroy(&user.Sol);CHKERRQ(ierr);
+  
+ 
    ierr = VecDestroy(&F_alg);CHKERRQ(ierr);
    ierr = VecDestroy(&X);CHKERRQ(ierr);
    ierr = VecDestroy(&Xdot);CHKERRQ(ierr);

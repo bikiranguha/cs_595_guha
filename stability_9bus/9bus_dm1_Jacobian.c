@@ -108,6 +108,7 @@ typedef struct {
   IS          is_alg; /* indices for algebraic equations */
   PetscBool   setisdiff; /* TS computes truncation error based only on the differential variables */
   PetscScalar    ybusfault[18];
+  PetscInt    neqs_pgrid;
   
 } Userctx;
 
@@ -358,7 +359,7 @@ PetscErrorCode SetInitialGuess(DM networkdm, Vec X, Vec V0)
   DMNetworkComponentGenericDataType *arr;
   //PetscInt       i ;
   PetscInt		 idx=0;
-  PetscScalar    Vr=0,Vi=0,IGr,IGi,Vm,Vm2;
+  PetscScalar    Vr,Vi,IGr,IGi,Vm,Vm2;
   PetscScalar    Eqp,Edp,delta;
   PetscScalar    Efd,RF,VR; /* Exciter variables */
   PetscScalar    Id,Iq;  /* Generator dq axis currents */
@@ -541,7 +542,7 @@ PetscErrorCode ri2dq(PetscScalar Fr,PetscScalar Fi,PetscScalar delta,PetscScalar
     PetscInt    numComps;
 	PetscScalar Yffr, Yffi;
 	PetscScalar   Vm, Vm2,Vm0;
-	PetscScalar  Vr0=0, Vi0=0;
+	PetscScalar  Vr0, Vi0;
 	PetscScalar  PD,QD;
 
     ierr = DMNetworkIsGhostVertex(networkdm,v,&ghostvtex);CHKERRQ(ierr);  // Ghost vertices may be buses belonging to other processors whose info is needed by the local processor.
@@ -869,7 +870,7 @@ PetscErrorCode AlgFunction (SNES snes, Vec X, Vec F, void *ctx) // the last argu
     PetscInt    numComps;
 	PetscScalar Yffr, Yffi;
 	PetscScalar   Vm, Vm2,Vm0;
-	PetscScalar  Vr0=0, Vi0=0;
+	PetscScalar  Vr0, Vi0;
 	PetscScalar  PD,QD;
 
     ierr = DMNetworkIsGhostVertex(networkdm,v,&ghostvtex);CHKERRQ(ierr);  // Ghost vertices may be buses belonging to other processors whose info is needed by the local processor.
@@ -1122,11 +1123,777 @@ PetscErrorCode AlgFunction (SNES snes, Vec X, Vec F, void *ctx) // the last argu
   PetscFunctionReturn(0); 
   
   }
+ 
+
+/*
+   J = [-df_dx, -df_dy
+        dg_dx, dg_dy]
+*/
+#undef __FUNCT__
+#define __FUNCT__ "ResidualJacobian"
+PetscErrorCode ResidualJacobian(SNES snes,Vec X,Mat J,Mat B,void *ctx)
+{
+  PetscErrorCode ierr;
+  Userctx        *user=(Userctx*)ctx;
+  //Vec            Xgen,Xnet;
+  //PetscScalar    *xgen,*xnet;
+  PetscInt       i,idx=0;
+  PetscScalar    Vr,Vi,Vm,Vm2;
+  PetscScalar    Eqp,Edp,delta; /* Generator variables */
+  PetscScalar    Efd;
+  PetscScalar    Id,Iq;  /* Generator dq axis currents */
+  PetscScalar    Vd,Vq,SE;
+  PetscScalar    val[10];
+  PetscInt       row[2],col[10];
+  PetscInt       net_start=user->neqs_gen;
+  PetscScalar    Zdq_inv[4],det;
+  PetscScalar    dVd_dVr,dVd_dVi,dVq_dVr,dVq_dVi,dVd_ddelta,dVq_ddelta;
+  PetscScalar    dIGr_ddelta,dIGi_ddelta,dIGr_dId,dIGr_dIq,dIGi_dId,dIGi_dIq;
+  PetscScalar    dSE_dEfd;
+  PetscScalar    dVm_dVd,dVm_dVq,dVm_dVr,dVm_dVi;
+  PetscInt          ncols;
+  const PetscInt    *cols;
+  const PetscScalar *yvals;
+  PetscInt          k;
+  PetscScalar PD,QD,Vm0,*v0,Vm4;
+  PetscScalar dPD_dVr,dPD_dVi,dQD_dVr,dQD_dVi;
+  PetscScalar dIDr_dVr,dIDr_dVi,dIDi_dVr,dIDi_dVi;
+   DM             networkdm;
+   Vec            localX; 
+    PetscInt       vfrom,vto,offsetfrom,offsetto;
+  PetscInt       v,vStart,vEnd,e;
+  const PetscScalar *xarr;
+  DMNetworkComponentGenericDataType *arr;
+
+    
+  PetscFunctionBegin;
+  //ierr  = MatZeroEntries(B);CHKERRQ(ierr);
+  //ierr  = DMCompositeGetLocalVectors(user->dmpgrid,&Xgen,&Xnet);CHKERRQ(ierr);
+  //ierr  = DMCompositeScatter(user->dmpgrid,X,Xgen,Xnet);CHKERRQ(ierr);
+
+  //ierr = VecGetArray(Xgen,&xgen);CHKERRQ(ierr);
+  //ierr = VecGetArray(Xnet,&xnet);CHKERRQ(ierr);
+
+  ierr = MatZeroEntries(J); CHKERRQ(ierr);
+  //Zeros all entries of a matrix
+
+  ierr = SNESGetDM(snes,&networkdm);CHKERRQ(ierr);
+  //(input, output);(snes, *dm)
+  //Gets the DM that may be used by some preconditioners
+  
+  ierr = DMGetLocalVector(networkdm,&localX);CHKERRQ(ierr);
+  // Gets a Seq PETSc vector that may be used with the DMXXX routines. 
+  //(input, output)
+  //(dm,*g)
+
+  ierr = DMGlobalToLocalBegin(networkdm,X,INSERT_VALUES,localX);CHKERRQ(ierr);
+  ierr = DMGlobalToLocalEnd(networkdm,X,INSERT_VALUES,localX);CHKERRQ(ierr);
+  //update ghost values by communicating with other processes
+
+  ierr = VecGetArrayRead(localX,&xarr);CHKERRQ(ierr);
+  //(x, **a)
+  //Get read-only pointer to contiguous array containing this processor's portion of the vector data.
+
+  ierr = DMNetworkGetVertexRange(networkdm,&vStart,&vEnd);CHKERRQ(ierr);
+  ierr = DMNetworkGetComponentDataArray(networkdm,&arr);CHKERRQ(ierr);
+  //Returns the component data array
+  //(dm, **componentdataarray)
+  //（input,output）
   
   
+    for (v=vStart; v < vEnd; v++) {
+    PetscInt    i,j,offsetd,key;
+    PetscInt    offset,goffset;
+    PetscScalar Vm;
+    PetscScalar Sbase=User->Sbase;
+    VERTEXDATA  bus;
+    PetscBool   ghostvtex;
+    PetscInt    numComps;
+
+    ierr = DMNetworkIsGhostVertex(networkdm,v,&ghostvtex);CHKERRQ(ierr);
+    
+    ierr = DMNetworkGetNumComponents(networkdm,v,&numComps);CHKERRQ(ierr);
+    
+    for (j = 0; j < numComps; j++) {
+      ierr = DMNetworkGetVariableOffset(networkdm,v,&offset);CHKERRQ(ierr);
+      ierr = DMNetworkGetVariableGlobalOffset(networkdm,v,&goffset);CHKERRQ(ierr);
+      //Get the global offset for the variable associated with the given vertex/edge from the global vector
+      //(input,input,output)
+      //(,the vertex point,the offset )
+      
+      ierr = DMNetworkGetComponentTypeOffset(networkdm,v,j,&key,&offsetd);CHKERRQ(ierr);
+
+// key 1 is incomplete
+      if (key == 1) {
+        PetscInt       nconnedges;
+	const PetscInt *connedges;
+
+	bus = (VERTEXDATA)(arr+offsetd);
+    //? why values for reference bus?
+	if (!ghostvtex) {
+	  /* Handle reference bus constrained dofs */
+	  if (bus->ide == REF_BUS || bus->ide == ISOLATED_BUS) {
+	    row[0] = goffset; row[1] = goffset+1;
+	    col[0] = goffset; col[1] = goffset+1; col[2] = goffset; col[3] = goffset+1;
+	    values[0] = 1.0; values[1] = 0.0; values[2] = 0.0; values[3] = 1.0;
+        //We know voltage angle and magnitude for reference bus.
+        //residual function for reference bus:
+        //thetam=thea, that is f1=theta-thetam=0;
+        //vm=v, that is f2=v-vm=0;
+        //take derivative of f1 with respect to theta=1, take derivative of f1 with respect to v=0;
+        //take derivative of f2 with respect to theta=0, take derivative of f2 with respect to v=1;
+        
+	    ierr = MatSetValues(J,2,row,2,col,values,ADD_VALUES);CHKERRQ(ierr);
+        //Inserts or adds a block of values into a matrix.
+        //(Mat mat,PetscInt m,const PetscInt idxm[],PetscInt n,const PetscInt idxn[],const PetscScalar v[],InsertMode addv)
+        // mat- the matrix
+        // m, idxm- the number of rows and their global indices
+       // n, idxn- the number of columns and their global indices
+       // v- a logically two-dimensional array of values
+       //addv- either ADD_VALUES or INSERT_VALUES, 
+       //row[0]: real power, P
+       //row[1]: reactive power, Q
+       //MatView(J,PETSC_VIEWER_STDOUT_WORLD);
+	    break;
+	  }
+	  
+	  Vm = xarr[offset+1];//?
+	  
+	  /* Shunt injections */
+          row[0] = goffset; row[1] = goffset+1;
+          col[0] = goffset; col[1] = goffset+1;
+          values[0] = values[1] = values[2] = values[3] = 0.0;
+          if (bus->ide != PV_BUS) {
+            values[1] = 2.0*Vm*bus->gl/Sbase;
+            values[3] = -2.0*Vm*bus->bl/Sbase;
+          }
+          ierr = MatSetValues(J,2,row,2,col,values,ADD_VALUES);CHKERRQ(ierr);
+	}
+
+	ierr = DMNetworkGetSupportingEdges(networkdm,v,&nconnedges,&connedges);CHKERRQ(ierr);
+    //Return the supporting edges for this vertex point
+    //(DM dm,PetscInt vertex,PetscInt *nedges,const PetscInt *edges[])
+    // Input:
+    // dm- The DMNetwork object
+    // vertex- the vertex point
+    // Output:
+    // nedges- number of edges connected to this vertex point
+    // edges- List of edge points
+    
+    // nconnedges- number of edges connected to this vertex point
+	for (i=0; i < nconnedges; i++) {
+	  EDGEDATA       branch;
+	  VERTEXDATA     busf,bust;
+	  PetscInt       offsetfd,offsettd,keyf,keyt;
+          PetscScalar    Gff,Bff,Gft,Bft,Gtf,Btf,Gtt,Btt;
+          const PetscInt *cone;
+          PetscScalar    Vmf,Vmt,thetaf,thetat,thetaft,thetatf;
+
+	  e = connedges[i];
+	  ierr = DMNetworkGetComponentTypeOffset(networkdm,e,0,&key,&offsetd);CHKERRQ(ierr);
+      //Gets the type along with the offset for indexing the component value from the component data array
+      //(DM dm,PetscInt p, PetscInt compnum, PetscInt *compkey, PetscInt *offset)
+      //Input Parameters
+      // dm- The DMNetwork object
+      // p- vertex/edge point
+      // compnum- component number
+      // Output Parameters
+      // compkey- the key obtained when registering the component
+     // offset- offset into the component data array associated with the vertex/edge point
+
+	  branch = (EDGEDATA)(arr+offsetd);
+	  if (!branch->status) continue;
+	  
+	  Gff = branch->yff[0];
+	  Bff = branch->yff[1];
+	  Gft = branch->yft[0];
+	  Bft = branch->yft[1];
+	  Gtf = branch->ytf[0];
+	  Btf = branch->ytf[1];
+	  Gtt = branch->ytt[0];
+	  Btt = branch->ytt[1];
+
+	  ierr = DMNetworkGetConnectedNodes(networkdm,e,&cone);CHKERRQ(ierr);
+      //Return the connected vertices for this edge point
+      //(DM dm,PetscInt e,const PetscInt *cone[])
+      // Input:
+      // dm- The DMNetwork object
+      // e- the edge point
+      // Output:
+      // cone -vertices connected to this edge 
+      
+	  vfrom = cone[0];
+	  vto   = cone[1];
+
+	  ierr = DMNetworkGetVariableOffset(networkdm,vfrom,&offsetfrom);CHKERRQ(ierr);
+      //Get the offset for accessing the variable associated with the given vertex/edge from the local vector.
+      //(DM dm,PetscInt p,PetscInt *offset)
+      // Input:
+      // p- the vertex point
+      // Output:
+      // offset -the offset 
+      
+	  ierr = DMNetworkGetVariableOffset(networkdm,vto,&offsetto);CHKERRQ(ierr);
+	  ierr = DMNetworkGetVariableGlobalOffset(networkdm,vfrom,&goffsetfrom);CHKERRQ(ierr);
+      // In networkdm, first part is edge, second part is vertex
+      //Get the global offset for the variable associated with the given vertex/edge from the global vector.
+      //(DM dm,PetscInt p,PetscInt *offsetg)
+      //Input:
+      // p- the vertex point
+      // Output:
+      // offsetg -the offset 
+      
+	  ierr = DMNetworkGetVariableGlobalOffset(networkdm,vto,&goffsetto);CHKERRQ(ierr);
+
+	  if (goffsetto < 0) goffsetto = -goffsetto - 1;
+
+	  thetaf = xarr[offsetfrom];
+	  Vmf     = xarr[offsetfrom+1];
+      //why not thetat=xarr[offsetfrom+2]? Is it possible offsetfrom+1=offsetto, Vmf and thetat are repeated?
+	  thetat = xarr[offsetto];
+	  Vmt     = xarr[offsetto+1];
+	  thetaft = thetaf - thetat;
+	  thetatf = thetat - thetaf;
+
+	  ierr = DMNetworkGetComponentTypeOffset(networkdm,vfrom,0,&keyf,&offsetfd);CHKERRQ(ierr);
+      //Gets the type along with the offset for indexing the component value from the component data array
+      //(DM dm,PetscInt p, PetscInt compnum, PetscInt *compkey, PetscInt *offset)
+      // Input:
+      // p- vertex point
+      // compnum- component number
+      // Output:
+      // compkey- the key obtained when registering the component
+      // offset- offset into the component data array associated with the vertex/edge point
+
+	  ierr = DMNetworkGetComponentTypeOffset(networkdm,vto,0,&keyt,&offsettd);CHKERRQ(ierr);
+	  busf = (VERTEXDATA)(arr+offsetfd);
+	  bust = (VERTEXDATA)(arr+offsettd);
+      // one of vfrom, vto is v
+	  if (vfrom == v) {
+	    if (busf->ide != REF_BUS) {
+	      /*    farr[offsetfrom]   += Gff*Vmf*Vmf + Vmf*Vmt*(Gft*PetscCosScalar(thetaft) + Bft*PetscSinScalar(thetaft));  */
+          // row[0] is P
+          //col[0,1,2,3]=thetaf, vf, thetav, vt;
+	      row[0]  = goffsetfrom;
+	      col[0]  = goffsetfrom; col[1] = goffsetfrom+1; col[2] = goffsetto; col[3] = goffsetto+1;
+	      values[0] =  Vmf*Vmt*(Gft*-PetscSinScalar(thetaft) + Bft*PetscCosScalar(thetaft)); /* df_dthetaf */    
+	      values[1] =  2.0*Gff*Vmf + Vmt*(Gft*PetscCosScalar(thetaft) + Bft*PetscSinScalar(thetaft)); /* df_dVmf */
+	      values[2] =  Vmf*Vmt*(Gft*PetscSinScalar(thetaft) + Bft*-PetscCosScalar(thetaft)); /* df_dthetat */
+	      values[3] =  Vmf*(Gft*PetscCosScalar(thetaft) + Bft*PetscSinScalar(thetaft)); /* df_dVmt */
+	      
+	      ierr = MatSetValues(J,1,row,4,col,values,ADD_VALUES);CHKERRQ(ierr);
+	    }
+	    if (busf->ide != PV_BUS && busf->ide != REF_BUS) {
+          // row[0] is Q
+          //col[0,1,2,3]=thetaf, vf, thetav, vt;
+	      row[0] = goffsetfrom+1;
+	      col[0]  = goffsetfrom; col[1] = goffsetfrom+1; col[2] = goffsetto; col[3] = goffsetto+1;
+	      /*    farr[offsetfrom+1] += -Bff*Vmf*Vmf + Vmf*Vmt*(-Bft*PetscCosScalar(thetaft) + Gft*PetscSinScalar(thetaft)); */
+	      values[0] =  Vmf*Vmt*(Bft*PetscSinScalar(thetaft) + Gft*PetscCosScalar(thetaft));
+	      values[1] =  -2.0*Bff*Vmf + Vmt*(-Bft*PetscCosScalar(thetaft) + Gft*PetscSinScalar(thetaft));
+	      values[2] =  Vmf*Vmt*(-Bft*PetscSinScalar(thetaft) + Gft*-PetscCosScalar(thetaft));
+	      values[3] =  Vmf*(-Bft*PetscCosScalar(thetaft) + Gft*PetscSinScalar(thetaft));
+	      
+	      ierr = MatSetValues(J,1,row,4,col,values,ADD_VALUES);CHKERRQ(ierr);
+	    }
+	  } else {
+        // vto == v; change Bft, Gft, thetaft,Vmf to Btf, Gtf, thetatf,Vmt
+	    if (bust->ide != REF_BUS) {
+          // row[0] is P
+          //col[0,1,2,3]=thetat, Vmt, thetaf, Vmf;
+	      row[0] = goffsetto;
+	      col[0] = goffsetto; col[1] = goffsetto+1; col[2] = goffsetfrom; col[3] = goffsetfrom+1;
+	      /*    farr[offsetto]   += Gtt*Vmt*Vmt + Vmt*Vmf*(Gtf*PetscCosScalar(thetatf) + Btf*PetscSinScalar(thetatf)); */
+	      values[0] =  Vmt*Vmf*(Gtf*-PetscSinScalar(thetatf) + Btf*PetscCosScalar(thetaft)); /* df_dthetat */
+	      values[1] =  2.0*Gtt*Vmt + Vmf*(Gtf*PetscCosScalar(thetatf) + Btf*PetscSinScalar(thetatf)); /* df_dVmt */
+	      values[2] =  Vmt*Vmf*(Gtf*PetscSinScalar(thetatf) + Btf*-PetscCosScalar(thetatf)); /* df_dthetaf */
+	      values[3] =  Vmt*(Gtf*PetscCosScalar(thetatf) + Btf*PetscSinScalar(thetatf)); /* df_dVmf */
+	      
+	      ierr = MatSetValues(J,1,row,4,col,values,ADD_VALUES);CHKERRQ(ierr);
+	    }
+	    if (bust->ide != PV_BUS && bust->ide != REF_BUS) {
+          // row[0] is Q
+          //col[0,1,2,3]=thetat, Vmt, thetaf, Vmf;
+	      row[0] = goffsetto+1;
+	      col[0] = goffsetto; col[1] = goffsetto+1; col[2] = goffsetfrom; col[3] = goffsetfrom+1;
+	      /*    farr[offsetto+1] += -Btt*Vmt*Vmt + Vmt*Vmf*(-Btf*PetscCosScalar(thetatf) + Gtf*PetscSinScalar(thetatf)); */
+	      values[0] =  Vmt*Vmf*(Btf*PetscSinScalar(thetatf) + Gtf*PetscCosScalar(thetatf));
+	      values[1] =  -2.0*Btt*Vmt + Vmf*(-Btf*PetscCosScalar(thetatf) + Gtf*PetscSinScalar(thetatf));
+	      values[2] =  Vmt*Vmf*(-Btf*PetscSinScalar(thetatf) + Gtf*-PetscCosScalar(thetatf));
+	      values[3] =  Vmt*(-Btf*PetscCosScalar(thetatf) + Gtf*PetscSinScalar(thetatf));
+	      
+	      ierr = MatSetValues(J,1,row,4,col,values,ADD_VALUES);CHKERRQ(ierr);
+	    }
+	  }
+	}
+    
+    // for PV bus, row[0] is Q
+	if (!ghostvtex && bus->ide == PV_BUS) {
+	  row[0] = goffset+1; col[0] = goffset+1;
+      //rpw[0] is for Q, so row[0]=goffset+1;
+      //col[0] is for v, so col[0]=gooffset+1;
+      //first row is P, second row is Q; first column is theta, seconde column is v.
+      //if row[0] for P, row[0]=goffset;
+      //if col[0] for theta, col[0]=goffset;      
+	  values[0]  = 1.0;
+	  ierr = MatSetValues(J,1,row,1,col,values,ADD_VALUES);CHKERRQ(ierr);
+      //PV bus, voltage is fixed
+      //function: vm=v;
+      //residual function: f=v-vm=0;
+      //take derivative of f with respect to v=1;
+	}
+      }
+    }
+  }  else if (key == 2){
+	   
+	 if (!ghostvtex) {
+	  gen = (Gen*)(arr+offsetd);
+	  
+  PetscScalar    Eqp,Edp,delta,w; /* Generator variables */
+  PetscScalar    Efd,RF,VR; /* Exciter variables */
+  PetscScalar    Id,Iq;  /* Generator dq axis currents */
+  //PetscScalar    Vd,Vq,SE;
+  PetscScalar    IGr,IGi;
+  PetscScalar    Zdq_inv[4],det;
+  PetscInt       idx, gidx;
+  PetscScalar    Xd, Xdp, Td0p, Xq, Xqp, Tq0p, TM, D, M, Rs ; // Generator parameters
+  PetscScalar    k1,k2,KE,TE,TF,KA,KF,Vref, TA; // Generator parameters
+  PetscScalar    vr,vi;
+	 
+    idx = offset + 2;  // local indices
+    gidx = goffset + 2;	// global indices
+
+	 /* Generator state variables */
+	Eqp   = xarr[idx];
+    Edp   = xarr[idx+1];
+    delta = xarr[idx+2];
+    w     = xarr[idx+3];
+    Id    = xarr[idx+4];
+    Iq    = xarr[idx+5];
+    Efd   = xarr[idx+6];
+    RF    = xarr[idx+7];
+    VR    = xarr[idx+8];
+	
+	/* Generator parameters */
+	Xd = gen->Xd;
+	Xdp = gen->Xdp;
+	Td0p = gen->Td0p;
+	Xq = gen->Xq;
+    Xqp = gen->Xqp;
+    Tq0p = gen->Tq0p;
+	TM = gen->TM;
+	D = gen->D;
+	M = gen->M;
+	Rs = gen->Rs;
+    k1 = gen->k1;
+	k2 = gen->k2;
+	KE = gen->KE;
+	TE = gen->TE;
+	TF = gen->TF;
+	KA = gen->KA;
+	KF = gen->KF;
+	Vref = gen->Vref;
+	TA = gen->TA;
+
+    
+    /*    fgen[idx]   = (Eqp + (Xd[i] - Xdp[i])*Id - Efd)/Td0p[i]; */
+    row[0] = gidx;
+    col[0] = gidx;           col[1] = gidx+4;          col[2] = gidx+6;
+    val[0] = 1/ Td0p; val[1] = (Xd - Xdp)/ Td0p; val[2] = -1/Td0p;
+
+    ierr = MatSetValues(J,1,row,3,col,val,INSERT_VALUES);CHKERRQ(ierr);
+
+    /*    fgen[idx+1] = (Edp - (Xq[i] - Xqp[i])*Iq)/Tq0p[i]; */
+    row[0] = gidx + 1;
+    col[0] = gidx + 1;       col[1] = gidx+5;
+    val[0] = 1/Tq0p; val[1] = -(Xq - Xqp)/Tq0p;
+    ierr   = MatSetValues(J,1,row,2,col,val,INSERT_VALUES);CHKERRQ(ierr);
+
+    /*    fgen[idx+2] = - w + w_s; */
+    row[0] = gidx + 2;
+    col[0] = gidx + 2; col[1] = gidx + 3;
+    val[0] = 0;       val[1] = -1;
+    ierr   = MatSetValues(J,1,row,2,col,val,INSERT_VALUES);CHKERRQ(ierr);
+
+    /*    fgen[gidx+3] = (-TM[i] + Edp*Id + Eqp*Iq + (Xqp[i] - Xdp[i])*Id*Iq + D[i]*(w - w_s))/M[i]; */
+    row[0] = gidx + 3;
+    col[0] = gidx; col[1] = gidx + 1; col[2] = gidx + 3;       col[3] = gidx + 4;                  col[4] = gidx + 5;
+    val[0] = Iq/M;  val[1] = Id/M;      val[2] = D/M; val[3] = (Edp + (Xqp-Xdp)*Iq)/M; val[4] = (Eqp + (Xqp - Xdp)*Id)/M;
+    ierr   = MatSetValues(J,1,row,5,col,val,INSERT_VALUES);CHKERRQ(ierr);
+    
+    
+    Vr   = xarr[offset]; /* Real part of generator terminal voltage */
+    Vi   = xarr[offset+1]; /* Imaginary part of the generator terminal voltage */
+    ierr = ri2dq(Vr,Vi,delta,&Vd,&Vq);CHKERRQ(ierr);
+
+    det = Rs*Rs + Xdp*Xqp;
+
+    Zdq_inv[0] = Rs/det;
+    Zdq_inv[1] = Xqp/det;
+    Zdq_inv[2] = -Xdp/det;
+    Zdq_inv[3] = Rs/det;
+
+    dVd_dVr    = PetscSinScalar(delta); dVd_dVi = -PetscCosScalar(delta);
+    dVq_dVr    = PetscCosScalar(delta); dVq_dVi = PetscSinScalar(delta);
+    dVd_ddelta = Vr*PetscCosScalar(delta) + Vi*PetscSinScalar(delta);
+    dVq_ddelta = -Vr*PetscSinScalar(delta) + Vi*PetscCosScalar(delta);
+
+
+    /*    fgen[idx+4] = Zdq_inv[0]*(-Edp + Vd) + Zdq_inv[1]*(-Eqp + Vq) + Id; */
+    row[0] = gidx+4;
+    col[0] = gidx;         col[1] = gidx+1;        col[2] = gidx + 2;
+    val[0] = -Zdq_inv[1]; val[1] = -Zdq_inv[0];  val[2] = Zdq_inv[0]*dVd_ddelta + Zdq_inv[1]*dVq_ddelta;
+    col[3] = gidx + 4; col[4] = net_start+2*gbus[i];                     col[5] = net_start + 2*gbus[i]+1;  // col[4] and col[5] are with respect to Vr and Vi
+    val[3] = 1;       val[4] = Zdq_inv[0]*dVd_dVr + Zdq_inv[1]*dVq_dVr; val[5] = Zdq_inv[0]*dVd_dVi + Zdq_inv[1]*dVq_dVi;
+    ierr   = MatSetValues(J,1,row,6,col,val,INSERT_VALUES);CHKERRQ(ierr);
+
+    /*  fgen[idx+5] = Zdq_inv[2]*(-Edp + Vd) + Zdq_inv[3]*(-Eqp + Vq) + Iq; */
+    row[0] = gidx+5;
+    col[0] = gidx;         col[1] = gidx+1;        col[2] = gidx + 2;
+    val[0] = -Zdq_inv[3]; val[1] = -Zdq_inv[2];  val[2] = Zdq_inv[2]*dVd_ddelta + Zdq_inv[3]*dVq_ddelta;
+    col[3] = gidx + 5; col[4] = net_start+2*gbus[i];                     col[5] = net_start + 2*gbus[i]+1;
+    val[3] = 1;       val[4] = Zdq_inv[2]*dVd_dVr + Zdq_inv[3]*dVq_dVr; val[5] = Zdq_inv[2]*dVd_dVi + Zdq_inv[3]*dVq_dVi;
+    ierr   = MatSetValues(J,1,row,6,col,val,INSERT_VALUES);CHKERRQ(ierr);
+	
+	
+	dIGr_ddelta = Id*PetscCosScalar(delta) - Iq*PetscSinScalar(delta);
+    dIGi_ddelta = Id*PetscSinScalar(delta) + Iq*PetscCosScalar(delta);
+    dIGr_dId    = PetscSinScalar(delta);  dIGr_dIq = PetscCosScalar(delta);
+    dIGi_dId    = -PetscCosScalar(delta); dIGi_dIq = PetscSinScalar(delta);
+	
+	
+	/* fnet[goffset]   -= IGi; */
+    row[0] = goffset;
+    col[0] = gidx+2;        col[1] = gidx + 4;   col[2] = gidx + 5;
+    val[0] = -dIGi_ddelta; val[1] = -dIGi_dId; val[2] = -dIGi_dIq;
+    ierr = MatSetValues(J,1,row,3,col,val,INSERT_VALUES);CHKERRQ(ierr);
+
+    /* fnet[goffset+1]   -= IGr; */
+    row[0] = goffset+1;
+    col[0] = gidx+2;        col[1] = gidx + 4;   col[2] = gidx + 5;
+    val[0] = -dIGr_ddelta; val[1] = -dIGr_dId; val[2] = -dIGr_dIq;
+    ierr   = MatSetValues(J,1,row,3,col,val,INSERT_VALUES);CHKERRQ(ierr);
+
+    
 
 
 
+    Vm = PetscSqrtScalar(Vd*Vd + Vq*Vq);
+
+   /*    fgen[idx+6] = (KE*Efd + SE - VR)/TE; */
+    /*    SE  = k1*PetscExpScalar(k2*Efd); */
+
+    dSE_dEfd = k1*k2*PetscExpScalar(k2*Efd);
+
+    row[0] = gidx + 6;
+    col[0] = gidx + 6;                     col[1] = gidx + 8;
+    val[0] = (KE + dSE_dEfd)/TE;  val[1] = -1/TE;
+    ierr   = MatSetValues(J,1,row,2,col,val,INSERT_VALUES);CHKERRQ(ierr);
+
+    /* Exciter differential equations */
+
+    /*    fgen[idx+7] = (RF - KF*Efd/TF)/TF; */
+    row[0] = gidx + 7;
+    col[0] = gidx + 6;       col[1] = gidx + 7;
+    val[0] = (-KF/TF)/TF;  val[1] = 1/TF;
+    ierr   = MatSetValues(J,1,row,2,col,val,INSERT_VALUES);CHKERRQ(ierr);
+
+    /*    fgen[idx+8] = (VR - KA*RF + KA*KF*Efd/TF - KA*(Vref - Vm))/TA; */
+    /* Vm = (Vd^2 + Vq^2)^0.5; */
+
+    dVm_dVd    = Vd/Vm; dVm_dVq = Vq/Vm;
+    dVm_dVr    = dVm_dVd*dVd_dVr + dVm_dVq*dVq_dVr;
+    dVm_dVi    = dVm_dVd*dVd_dVi + dVm_dVq*dVq_dVi;
+    row[0]     = gidx + 8;
+    col[0]     = gidx + 6;           col[1] = gidx + 7; col[2] = gidx + 8;
+    val[0]     = (KA*KF/TF)/TA; val[1] = -KA/TA;  val[2] = 1/TA;
+    col[3]     = goffset; col[4] = goffset+1;
+    val[3]     = KA*dVm_dVr/TA;         val[4] = KA*dVm_dVi/TA;
+    ierr       = MatSetValues(J,1,row,5,col,val,INSERT_VALUES);CHKERRQ(ierr);
+ 
+	
+	//stop here
+
+   
+	}  
+	      
+   }  else if (key ==3){
+	
+	if (!ghostvtex) {
+	  
+	  PetscInt k;
+	  PetscInt    ld_nsegsp;
+	 PetscScalar *ld_alphap;//ld_alphap=[1,0,0], an array, not a value, so use *ld_alphap;
+  PetscScalar *ld_betap;
+  PetscInt    ld_nsegsq;
+  PetscScalar *ld_alphaq;
+  PetscScalar *ld_betaq;
+  PetscScalar PD0, QD0, IDr,IDi;
+  
+	  
+	  
+	  load = (Load*)(arr+offsetd);
+	  
+	  
+	  
+	  /* Load Parameters */
+	  
+	  ld_nsegsp = load->ld_nsegsp;
+	  ld_alphap = load->ld_alphap;
+	  ld_betap = load->ld_betap;
+	  ld_nsegsq = load->ld_nsegsq;
+	  ld_alphaq = load->ld_alphaq;
+	  ld_betaq = load->ld_betaq;
+	  PD0 = load->PD0;
+	  QD0 = load->QD0;
+	  
+	  
+	Vr = xarr[offset]; /* Real part of generator terminal voltage */
+    Vi = xarr[offset+1]; /* Imaginary part of the generator terminal voltage */
+    Vm  = PetscSqrtScalar(Vr*Vr + Vi*Vi); Vm2 = Vm*Vm;
+    Vm0 = PetscSqrtScalar(Vr0*Vr0 + Vi0*Vi0);
+    PD  = QD = 0.0;
+    for (k=0; k < ld_nsegsp; k++) PD += ld_alphap[k]*PD0*PetscPowScalar((Vm/Vm0),ld_betap[k]);
+    for (k=0; k < ld_nsegsq; k++) QD += ld_alphaq[k]*QD0*PetscPowScalar((Vm/Vm0),ld_betaq[k]);
+
+    /* Load currents */
+    IDr = (PD*Vr + QD*Vi)/Vm2;
+    IDi = (-QD*Vr + PD*Vi)/Vm2;
+
+    farr[offset]   += IDi;
+    farr[offset+1] += IDr;
+	}
+   }
+  
+  
+  /* Generator subsystem */
+  for (i=0; i < ngen; i++) {
+    Eqp   = xgen[idx];
+    Edp   = xgen[idx+1];
+    delta = xgen[idx+2];
+    Id    = xgen[idx+4];
+    Iq    = xgen[idx+5];
+    Efd   = xgen[idx+6];
+
+    
+
+    Vr   = xnet[2*gbus[i]]; /* Real part of generator terminal voltage */
+    Vi   = xnet[2*gbus[i]+1]; /* Imaginary part of the generator terminal voltage */
+    ierr = ri2dq(Vr,Vi,delta,&Vd,&Vq);CHKERRQ(ierr);
+
+    det = Rs[i]*Rs[i] + Xdp[i]*Xqp[i];
+
+    Zdq_inv[0] = Rs[i]/det;
+    Zdq_inv[1] = Xqp[i]/det;
+    Zdq_inv[2] = -Xdp[i]/det;
+    Zdq_inv[3] = Rs[i]/det;
+
+    dVd_dVr    = PetscSinScalar(delta); dVd_dVi = -PetscCosScalar(delta);
+    dVq_dVr    = PetscCosScalar(delta); dVq_dVi = PetscSinScalar(delta);
+    dVd_ddelta = Vr*PetscCosScalar(delta) + Vi*PetscSinScalar(delta);
+    dVq_ddelta = -Vr*PetscSinScalar(delta) + Vi*PetscCosScalar(delta);
+
+    /*    fgen[idx+4] = Zdq_inv[0]*(-Edp + Vd) + Zdq_inv[1]*(-Eqp + Vq) + Id; */
+    row[0] = idx+4;
+    col[0] = idx;         col[1] = idx+1;        col[2] = idx + 2;
+    val[0] = -Zdq_inv[1]; val[1] = -Zdq_inv[0];  val[2] = Zdq_inv[0]*dVd_ddelta + Zdq_inv[1]*dVq_ddelta;
+    col[3] = idx + 4; col[4] = net_start+2*gbus[i];                     col[5] = net_start + 2*gbus[i]+1;  // col[4] and col[5] are with respect to Vr and Vi
+    val[3] = 1;       val[4] = Zdq_inv[0]*dVd_dVr + Zdq_inv[1]*dVq_dVr; val[5] = Zdq_inv[0]*dVd_dVi + Zdq_inv[1]*dVq_dVi;
+    ierr   = MatSetValues(J,1,row,6,col,val,INSERT_VALUES);CHKERRQ(ierr);
+
+    /*  fgen[idx+5] = Zdq_inv[2]*(-Edp + Vd) + Zdq_inv[3]*(-Eqp + Vq) + Iq; */
+    row[0] = idx+5;
+    col[0] = idx;         col[1] = idx+1;        col[2] = idx + 2;
+    val[0] = -Zdq_inv[3]; val[1] = -Zdq_inv[2];  val[2] = Zdq_inv[2]*dVd_ddelta + Zdq_inv[3]*dVq_ddelta;
+    col[3] = idx + 5; col[4] = net_start+2*gbus[i];                     col[5] = net_start + 2*gbus[i]+1;
+    val[3] = 1;       val[4] = Zdq_inv[2]*dVd_dVr + Zdq_inv[3]*dVq_dVr; val[5] = Zdq_inv[2]*dVd_dVi + Zdq_inv[3]*dVq_dVi;
+    ierr   = MatSetValues(J,1,row,6,col,val,INSERT_VALUES);CHKERRQ(ierr);
+
+    dIGr_ddelta = Id*PetscCosScalar(delta) - Iq*PetscSinScalar(delta);
+    dIGi_ddelta = Id*PetscSinScalar(delta) + Iq*PetscCosScalar(delta);
+    dIGr_dId    = PetscSinScalar(delta);  dIGr_dIq = PetscCosScalar(delta);
+    dIGi_dId    = -PetscCosScalar(delta); dIGi_dIq = PetscSinScalar(delta);
+
+    /* fnet[2*gbus[i]]   -= IGi; */
+    row[0] = net_start + 2*gbus[i];
+    col[0] = idx+2;        col[1] = idx + 4;   col[2] = idx + 5;
+    val[0] = -dIGi_ddelta; val[1] = -dIGi_dId; val[2] = -dIGi_dIq;
+    ierr = MatSetValues(J,1,row,3,col,val,INSERT_VALUES);CHKERRQ(ierr);
+
+    /* fnet[2*gbus[i]+1]   -= IGr; */
+    row[0] = net_start + 2*gbus[i]+1;
+    col[0] = idx+2;        col[1] = idx + 4;   col[2] = idx + 5;
+    val[0] = -dIGr_ddelta; val[1] = -dIGr_dId; val[2] = -dIGr_dIq;
+    ierr   = MatSetValues(J,1,row,3,col,val,INSERT_VALUES);CHKERRQ(ierr);
+
+    Vm = PetscSqrtScalar(Vd*Vd + Vq*Vq);
+
+    /*    fgen[idx+6] = (KE[i]*Efd + SE - VR)/TE[i]; */
+    /*    SE  = k1[i]*PetscExpScalar(k2[i]*Efd); */
+
+    dSE_dEfd = k1[i]*k2[i]*PetscExpScalar(k2[i]*Efd);
+
+    row[0] = idx + 6;
+    col[0] = idx + 6;                     col[1] = idx + 8;
+    val[0] = (KE[i] + dSE_dEfd)/TE[i];  val[1] = -1/TE[i];
+    ierr   = MatSetValues(J,1,row,2,col,val,INSERT_VALUES);CHKERRQ(ierr);
+
+    /* Exciter differential equations */
+
+    /*    fgen[idx+7] = (RF - KF[i]*Efd/TF[i])/TF[i]; */
+    row[0] = idx + 7;
+    col[0] = idx + 6;       col[1] = idx + 7;
+    val[0] = (-KF[i]/TF[i])/TF[i];  val[1] = 1/TF[i];
+    ierr   = MatSetValues(J,1,row,2,col,val,INSERT_VALUES);CHKERRQ(ierr);
+
+    /*    fgen[idx+8] = (VR - KA[i]*RF + KA[i]*KF[i]*Efd/TF[i] - KA[i]*(Vref[i] - Vm))/TA[i]; */
+    /* Vm = (Vd^2 + Vq^2)^0.5; */
+
+    dVm_dVd    = Vd/Vm; dVm_dVq = Vq/Vm;
+    dVm_dVr    = dVm_dVd*dVd_dVr + dVm_dVq*dVq_dVr;
+    dVm_dVi    = dVm_dVd*dVd_dVi + dVm_dVq*dVq_dVi;
+    row[0]     = idx + 8;
+    col[0]     = idx + 6;           col[1] = idx + 7; col[2] = idx + 8;
+    val[0]     = (KA[i]*KF[i]/TF[i])/TA[i]; val[1] = -KA[i]/TA[i];  val[2] = 1/TA[i];
+    col[3]     = net_start + 2*gbus[i]; col[4] = net_start + 2*gbus[i]+1;
+    val[3]     = KA[i]*dVm_dVr/TA[i];         val[4] = KA[i]*dVm_dVi/TA[i];
+    ierr       = MatSetValues(J,1,row,5,col,val,INSERT_VALUES);CHKERRQ(ierr);
+    idx        = idx + 9;
+  }
+
+  for (i=0; i<nbus; i++) {// allocating Ybus indices in J for branch currents
+    ierr   = MatGetRow(user->Ybus,2*i,&ncols,&cols,&yvals);CHKERRQ(ierr);
+    row[0] = net_start + 2*i;
+    for (k=0; k<ncols; k++) {// adding non zero columns for the branch currents elements in Ir (real current balance equations)
+      col[k] = net_start + cols[k];
+      val[k] = yvals[k];
+    }
+    ierr = MatSetValues(J,1,row,ncols,col,val,INSERT_VALUES);CHKERRQ(ierr);
+    ierr = MatRestoreRow(user->Ybus,2*i,&ncols,&cols,&yvals);CHKERRQ(ierr);
+
+    ierr   = MatGetRow(user->Ybus,2*i+1,&ncols,&cols,&yvals);CHKERRQ(ierr);
+    row[0] = net_start + 2*i+1;
+    for (k=0; k<ncols; k++) {// adding non zero columns for the branch currents elements in Ii (imaginary current balance equations)
+      col[k] = net_start + cols[k];
+      val[k] = yvals[k];
+    }
+    ierr = MatSetValues(J,1,row,ncols,col,val,INSERT_VALUES);CHKERRQ(ierr);
+    ierr = MatRestoreRow(user->Ybus,2*i+1,&ncols,&cols,&yvals);CHKERRQ(ierr);
+  }
+
+  ierr = MatAssemblyBegin(J,MAT_FLUSH_ASSEMBLY);CHKERRQ(ierr);
+  ierr = MatAssemblyEnd(J,MAT_FLUSH_ASSEMBLY);CHKERRQ(ierr);
+
+  ierr = VecGetArray(user->V0,&v0);CHKERRQ(ierr);
+  for (i=0; i < nload; i++) {
+    Vr      = xnet[2*lbus[i]]; /* Real part of load bus voltage */
+    Vi      = xnet[2*lbus[i]+1]; /* Imaginary part of the load bus voltage */
+    Vm      = PetscSqrtScalar(Vr*Vr + Vi*Vi); Vm2 = Vm*Vm; Vm4 = Vm2*Vm2;
+    Vm0     = PetscSqrtScalar(v0[2*lbus[i]]*v0[2*lbus[i]] + v0[2*lbus[i]+1]*v0[2*lbus[i]+1]);
+    PD      = QD = 0.0;
+    dPD_dVr = dPD_dVi = dQD_dVr = dQD_dVi = 0.0;
+    for (k=0; k < ld_nsegsp[i]; k++) {  // 
+      PD      += ld_alphap[k]*PD0[i]*PetscPowScalar((Vm/Vm0),ld_betap[k]);
+      dPD_dVr += ld_alphap[k]*ld_betap[k]*PD0[i]*PetscPowScalar((1/Vm0),ld_betap[k])*Vr*PetscPowScalar(Vm,(ld_betap[k]-2));
+      dPD_dVi += ld_alphap[k]*ld_betap[k]*PD0[i]*PetscPowScalar((1/Vm0),ld_betap[k])*Vi*PetscPowScalar(Vm,(ld_betap[k]-2));
+    }
+    for (k=0; k < ld_nsegsq[i]; k++) {
+      QD      += ld_alphaq[k]*QD0[i]*PetscPowScalar((Vm/Vm0),ld_betaq[k]);
+      dQD_dVr += ld_alphaq[k]*ld_betaq[k]*QD0[i]*PetscPowScalar((1/Vm0),ld_betaq[k])*Vr*PetscPowScalar(Vm,(ld_betaq[k]-2));
+      dQD_dVi += ld_alphaq[k]*ld_betaq[k]*QD0[i]*PetscPowScalar((1/Vm0),ld_betaq[k])*Vi*PetscPowScalar(Vm,(ld_betaq[k]-2));
+    }
+
+    /*    IDr = (PD*Vr + QD*Vi)/Vm2; */
+    /*    IDi = (-QD*Vr + PD*Vi)/Vm2; */
+
+    dIDr_dVr = (dPD_dVr*Vr + dQD_dVr*Vi + PD)/Vm2 - ((PD*Vr + QD*Vi)*2*Vr)/Vm4;
+    dIDr_dVi = (dPD_dVi*Vr + dQD_dVi*Vi + QD)/Vm2 - ((PD*Vr + QD*Vi)*2*Vi)/Vm4;
+
+    dIDi_dVr = (-dQD_dVr*Vr + dPD_dVr*Vi - QD)/Vm2 - ((-QD*Vr + PD*Vi)*2*Vr)/Vm4;
+    dIDi_dVi = (-dQD_dVi*Vr + dPD_dVi*Vi + PD)/Vm2 - ((-QD*Vr + PD*Vi)*2*Vi)/Vm4;
+
+
+    /*    fnet[2*lbus[i]]   += IDi; */
+    row[0] = net_start + 2*lbus[i];
+    col[0] = net_start + 2*lbus[i];  col[1] = net_start + 2*lbus[i]+1;
+    val[0] = dIDi_dVr;               val[1] = dIDi_dVi;
+    ierr   = MatSetValues(J,1,row,2,col,val,ADD_VALUES);CHKERRQ(ierr);
+    /*    fnet[2*lbus[i]+1] += IDr; */
+    row[0] = net_start + 2*lbus[i]+1;
+    col[0] = net_start + 2*lbus[i];  col[1] = net_start + 2*lbus[i]+1;
+    val[0] = dIDr_dVr;               val[1] = dIDr_dVi;
+    ierr   = MatSetValues(J,1,row,2,col,val,ADD_VALUES);CHKERRQ(ierr);
+  }
+  ierr = VecRestoreArray(user->V0,&v0);CHKERRQ(ierr);
+
+  ierr = VecRestoreArray(Xgen,&xgen);CHKERRQ(ierr);
+  ierr = VecRestoreArray(Xnet,&xnet);CHKERRQ(ierr);
+
+  ierr = DMCompositeRestoreLocalVectors(user->dmpgrid,&Xgen,&Xnet);CHKERRQ(ierr);
+
+  ierr = MatAssemblyBegin(J,MAT_FINAL_ASSEMBLY);CHKERRQ(ierr);
+  ierr = MatAssemblyEnd(J,MAT_FINAL_ASSEMBLY);CHKERRQ(ierr);
+  PetscFunctionReturn(0);
+}
+
+/*
+   J = [I, 0
+        dg_dx, dg_dy]     Q: Why is df_dx = 1 for diagonal elements?
+*/
+#undef __FUNCT__
+#define __FUNCT__ "AlgJacobian"
+PetscErrorCode AlgJacobian(SNES snes,Vec X,Mat A,Mat B,void *ctx)
+{
+  PetscErrorCode ierr;
+  Userctx        *user=(Userctx*)ctx;
+
+  PetscFunctionBegin;
+  ierr = ResidualJacobian(snes,X,A,B,ctx);CHKERRQ(ierr);
+  ierr = MatSetOption(A,MAT_KEEP_NONZERO_PATTERN,PETSC_TRUE);CHKERRQ(ierr);
+  ierr = MatZeroRowsIS(A,user->is_diff,1.0,NULL,NULL);CHKERRQ(ierr); // zeroes all the rows related to differential equations and put '1' for diagonal elements
+  PetscFunctionReturn(0);
+}
+ 
+  
+/*
+   J = [a*I-df_dx, -df_dy
+        dg_dx, dg_dy]                Q: Dont understand this function?
+*/
+
+#undef __FUNCT__
+#define __FUNCT__ "IJacobian"
+PetscErrorCode IJacobian(TS ts,PetscReal t,Vec X,Vec Xdot,PetscReal a,Mat A,Mat B,Userctx *user)
+{
+  PetscErrorCode ierr;
+  SNES           snes;
+  PetscScalar    atmp = (PetscScalar) a;
+  PetscInt       i,row;
+
+  PetscFunctionBegin;
+  user->t = t;
+
+  ierr = TSGetSNES(ts,&snes);CHKERRQ(ierr);
+  ierr = ResidualJacobian(snes,X,A,B,user);CHKERRQ(ierr);
+  for (i=0;i < ngen;i++) {
+    row = 9*i;
+    ierr = MatSetValues(A,1,&row,1,&row,&atmp,ADD_VALUES);CHKERRQ(ierr);
+    row  = 9*i+1;
+    ierr = MatSetValues(A,1,&row,1,&row,&atmp,ADD_VALUES);CHKERRQ(ierr);
+    row  = 9*i+2;
+    ierr = MatSetValues(A,1,&row,1,&row,&atmp,ADD_VALUES);CHKERRQ(ierr);
+    row  = 9*i+3;
+    ierr = MatSetValues(A,1,&row,1,&row,&atmp,ADD_VALUES);CHKERRQ(ierr);
+    row  = 9*i+6;
+    ierr = MatSetValues(A,1,&row,1,&row,&atmp,ADD_VALUES);CHKERRQ(ierr);
+    row  = 9*i+7;
+    ierr = MatSetValues(A,1,&row,1,&row,&atmp,ADD_VALUES);CHKERRQ(ierr);
+    row  = 9*i+8;
+    ierr = MatSetValues(A,1,&row,1,&row,&atmp,ADD_VALUES);CHKERRQ(ierr);
+  }
+  ierr = MatAssemblyBegin(A,MAT_FINAL_ASSEMBLY);CHKERRQ(ierr);
+  ierr = MatAssemblyEnd(A,MAT_FINAL_ASSEMBLY);CHKERRQ(ierr);
+  PetscFunctionReturn(0);
+}
  
 
 #undef __FUNCT__
@@ -1149,6 +1916,7 @@ int main(int argc,char ** argv)
   PetscViewer    Xview,Ybusview;
   // PetscInt       i,idx,*idx2,row_loc,col_loc;
   // PetscScalar    *x,*mat,val,*amat;
+  Vec            vatol;
    Mat         Ybus; /* Network admittance matrix */
    Bus        *bus;
    Branch     *branch;
@@ -1269,15 +2037,11 @@ int main(int argc,char ** argv)
   
   ierr = DMSetUp(networkdm);CHKERRQ(ierr);
   
-  
-  
-  
   if (!rank) {
-	ierr = PetscFree4(bus,gen,load,branch);CHKERRQ(ierr);
-    // ierr = PetscFree(bus);CHKERRQ(ierr);
-    // ierr = PetscFree(gen);CHKERRQ(ierr);
-    // ierr = PetscFree(branch);CHKERRQ(ierr);
-    // ierr = PetscFree(load);CHKERRQ(ierr);
+    ierr = PetscFree(bus);CHKERRQ(ierr);
+    ierr = PetscFree(gen);CHKERRQ(ierr);
+    ierr = PetscFree(branch);CHKERRQ(ierr);
+    ierr = PetscFree(load);CHKERRQ(ierr);
     //ierr = PetscFree(pfdata);CHKERRQ(ierr);
     //I have already created DM, so the above are not useful any longer.
   }
@@ -1297,6 +2061,14 @@ int main(int argc,char ** argv)
   ierr = DMCreateGlobalVector(networkdm,&X);CHKERRQ(ierr);
   ierr = DMCreateGlobalVector(networkdm,&Xdot);CHKERRQ(ierr);
   ierr = VecDuplicate(X,&F);CHKERRQ(ierr);
+  
+  //Jacobian
+  ierr = DMCreateMatrix(networkdm,&J);CHKERRQ(ierr);
+ // Gets empty Jacobian for a DM
+ // This properly preallocates the number of nonzeros in the sparse matrix so you do not need to do it yourself.
+  ierr = MatSetOption(J,MAT_NEW_NONZERO_ALLOCATION_ERR,PETSC_FALSE);CHKERRQ(ierr);
+  
+  
   ierr = SetInitialGuess(networkdm, X, V0); CHKERRQ(ierr);
   //VecView(X,PETSC_VIEWER_STDOUT_WORLD);
   
@@ -1307,6 +2079,9 @@ int main(int argc,char ** argv)
     user.Rfault    = 0.0001;
     user.setisdiff = PETSC_FALSE;
     user.faultbus  = 8;
+     neqs_gen   = 9*ngen; /* # eqs. for generator subsystem */
+    neqs_net   = 2*nbus; /* # eqs. for network subsystem   */
+    user.neqs_pgrid=9*3+2*9;
     ierr           = PetscOptionsReal("-tfaulton","","",user.tfaulton,&user.tfaulton,NULL);CHKERRQ(ierr);
     ierr           = PetscOptionsReal("-tfaultoff","","",user.tfaultoff,&user.tfaultoff,NULL);CHKERRQ(ierr);
     ierr           = PetscOptionsInt("-faultbus","","",user.faultbus,&user.faultbus,NULL);CHKERRQ(ierr);
@@ -1341,6 +2116,9 @@ int main(int argc,char ** argv)
   ierr = TSSetApplicationContext(ts,&user);CHKERRQ(ierr);
   ierr = TSSetType(ts,TSBEULER);CHKERRQ(ierr);
   ierr = TSSetIFunction(ts,NULL, (TSIFunction) FormIFunction,&user);CHKERRQ(ierr);
+  
+  //Jacobian
+   ierr = TSSetIJacobian(ts,J,J,(TSIJacobian)IJacobian,&user);CHKERRQ(ierr);
    //VecView(F,PETSC_VIEWER_STDOUT_WORLD);
   
   
@@ -1354,7 +2132,7 @@ int main(int argc,char ** argv)
   user.alg_flg = PETSC_FALSE;
   /* Prefault period */
    ierr = TSSolve(ts,X);CHKERRQ(ierr);
-   //VecView(X,PETSC_VIEWER_STDOUT_WORLD);
+  // VecView(X,PETSC_VIEWER_STDOUT_WORLD);
   // ierr = TSGetConvergedReason(ts,&reason);CHKERRQ(ierr);
   
   
@@ -1434,6 +2212,11 @@ int main(int argc,char ** argv)
 
   ierr = TSSolve(ts,X);CHKERRQ(ierr);
   //VecView(X,PETSC_VIEWER_STDOUT_WORLD);
+  
+  
+  
+  
+
   
    ierr = VecDestroy(&F_alg);CHKERRQ(ierr);
    ierr = VecDestroy(&X);CHKERRQ(ierr);
