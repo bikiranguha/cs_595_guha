@@ -52,6 +52,10 @@ include ${PETSC_DIR}/lib/petsc/conf/rules
 9bus_dm1_fso: 9bus_dm1_fso.o  chkopts
 	-${CLINKER} -o 9bus_dm1_fso 9bus_dm1_fso.o  ${PETSC_TS_LIB}
 	${RM} 9bus_dm1_fso.o
+
+9bus_dm1_fso1: 9bus_dm1_fso1.o  chkopts
+	-${CLINKER} -o 9bus_dm1_fso1 9bus_dm1_fso1.o  ${PETSC_TS_LIB}
+	${RM} 9bus_dm1_fso1.o
     
 ex9bus: ex9bus.o  chkopts
 	-${CLINKER} -o ex9bus ex9bus.o  ${PETSC_TS_LIB}
