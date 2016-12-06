@@ -1209,7 +1209,11 @@ int main(int argc,char ** argv)
    //TSConvergedReason reason;
    //PetscBool alg_flg;
    //PetscScalar    ybusfault[18];
+<<<<<<< HEAD
    PetscInt    nc = 100;  // no. of copies 
+=======
+   PetscInt    nc = 200;  // no. of copies 
+>>>>>>> 0b520e273a8875e4acc4319eff612b23290c06ce
 
 
   
@@ -1488,7 +1492,11 @@ int main(int argc,char ** argv)
   user.alg_flg = PETSC_FALSE;
 
   ierr = TSSolve(ts,X);CHKERRQ(ierr);
+<<<<<<< HEAD
   VecView(X,PETSC_VIEWER_STDOUT_WORLD);
+=======
+  //VecView(X,PETSC_VIEWER_STDOUT_WORLD);
+>>>>>>> 0b520e273a8875e4acc4319eff612b23290c06ce
   
    ierr = VecDestroy(&F_alg);CHKERRQ(ierr);
    ierr = VecDestroy(&X);CHKERRQ(ierr);

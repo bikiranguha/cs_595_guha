@@ -190,7 +190,11 @@ PetscErrorCode read_data(PetscInt nc, PetscInt ngen, PetscInt nload, PetscInt nb
 
     Note: All loads have the same characteristic currently.
   */
+<<<<<<< HEAD
    PetscInt lbus[3] = {4,5,7};
+=======
+ //  PetscInt lbus[3] = {4,5,7};
+>>>>>>> 0b520e273a8875e4acc4319eff612b23290c06ce
    PetscScalar PD0[3] = {1.25,0.9,1.0};
    PetscScalar QD0[3] = {0.5,0.3,0.35};
    PetscInt    ld_nsegsp[3] = {3,3,3};
@@ -1297,11 +1301,24 @@ int main(int argc,char ** argv)
   //ierr = PetscLogStageRegister("Create network",&stage1);CHKERRQ(ierr);
   //PetscLogStagePush(stage1);
   // /* Set number of nodes/edges */
+<<<<<<< HEAD
   ierr = DMNetworkSetSizes(networkdm,nbus*nc,nbranch*nc+(nc-1),PETSC_DETERMINE,PETSC_DETERMINE);CHKERRQ(ierr);
+=======
+  if (!rank){
+  ierr = DMNetworkSetSizes(networkdm,nbus*nc,nbranch*nc+(nc-1),PETSC_DETERMINE,PETSC_DETERMINE);CHKERRQ(ierr);
+  }
+  else{
+	 ierr = DMNetworkSetSizes(networkdm,0,0,PETSC_DETERMINE,PETSC_DETERMINE);CHKERRQ(ierr); 
+  }
+>>>>>>> 0b520e273a8875e4acc4319eff612b23290c06ce
 
   /* Add edge connectivity */
   ierr = DMNetworkSetEdgeList(networkdm,edgelist);CHKERRQ(ierr);
   /* Set up the network layout */
+<<<<<<< HEAD
+=======
+  
+>>>>>>> 0b520e273a8875e4acc4319eff612b23290c06ce
    ierr = DMNetworkLayoutSetUp(networkdm);CHKERRQ(ierr);
   
   /* We don't use these data structures anymore since they have been copied to networkdm */
@@ -1366,7 +1383,14 @@ int main(int argc,char ** argv)
   ierr = DMCreateGlobalVector(networkdm,&X);CHKERRQ(ierr);
   ierr = DMCreateGlobalVector(networkdm,&Xdot);CHKERRQ(ierr);
   ierr = VecDuplicate(X,&F);CHKERRQ(ierr);
+<<<<<<< HEAD
   ierr = SetInitialGuess(networkdm, X); CHKERRQ(ierr);
+=======
+  
+ 
+  ierr = SetInitialGuess(networkdm, X); CHKERRQ(ierr);
+
+>>>>>>> 0b520e273a8875e4acc4319eff612b23290c06ce
   //VecView(X,PETSC_VIEWER_STDOUT_WORLD);
   
   ierr = PetscOptionsBegin(PETSC_COMM_WORLD,NULL,"Transient stability fault options","");CHKERRQ(ierr);
@@ -1466,7 +1490,11 @@ int main(int argc,char ** argv)
   user.alg_flg = PETSC_TRUE;
   /* Solve the algebraic equations */
   ierr = SNESSolve(snes_alg,NULL,X);CHKERRQ(ierr);
+<<<<<<< HEAD
   //VecView(X,PETSC_VIEWER_STDOUT_WORLD);
+=======
+  VecView(X,PETSC_VIEWER_STDOUT_WORLD);
+>>>>>>> 0b520e273a8875e4acc4319eff612b23290c06ce
   
   
   
