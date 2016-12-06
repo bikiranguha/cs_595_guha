@@ -1236,11 +1236,12 @@ int main(int argc,char ** argv)
    //TSConvergedReason reason;
    //PetscBool alg_flg;
    //PetscScalar    ybusfault[18];
-   PetscInt    nc = 3;  // no. of copies 
+   PetscInt    nc = 1;  // Default no. of copies 
 
 
   
   ierr = PetscInitialize(&argc,&argv,"petscoptions",help);CHKERRQ(ierr);
+  ierr = PetscOptionsGetInt(NULL,NULL,"-nc",&nc,NULL);CHKERRQ(ierr);  // User defined no. of copies
   ierr = MPI_Comm_size(PETSC_COMM_WORLD,&size);CHKERRQ(ierr);
   ierr = MPI_Comm_rank(PETSC_COMM_WORLD,&rank);CHKERRQ(ierr);
   
