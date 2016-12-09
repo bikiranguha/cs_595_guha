@@ -4,7 +4,7 @@ Systems Dynamics and Stability (Chapter 7) by P. Sauer and M. A. Pai.\n\
 The power grid in this example consists of 9 buses (nodes), 3 generators,\n\
 3 loads, and 9 transmission lines. The network equations are written\n\
 in current balance form using rectangular coordiantes.\n\n";
-
+  
 /* T
    Concepts: DMNetwork
    Concepts: PETSc TS solver

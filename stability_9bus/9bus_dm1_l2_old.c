@@ -1,9 +1,15 @@
-static char help[] = "Power grid stability analysis of WECC 9 bus system.\n\
+static char help[] = "Power grid stability analysis of a large power system.\n\
+The base system is the WECC 9 bus system. \n\
+By changing the values of 'nc', we can make copies of the base system and have them radially connected .\n\
+Therefore, depending on the variable 'nc', the system bus size is '9*nc' .\n\
 This example is based on the 9-bus (node) example given in the book Power\n\
 Systems Dynamics and Stability (Chapter 7) by P. Sauer and M. A. Pai.\n\
-The power grid in this example consists of 9 buses (nodes), 3 generators,\n\
+The base power grid in this example consists of 9 buses (nodes), 3 generators,\n\
 3 loads, and 9 transmission lines. The network equations are written\n\
-in current balance form using rectangular coordiantes.\n\n";
+in current balance form using rectangular coordiantes. \n\
+DMNetwork is used to manage the variables and equations of the entire system. \n\
+Input parameters include:\n\
+  -nc : no. of copies of the original system\n\n";
 
 /* T
    Concepts: DMNetwork
@@ -186,7 +192,7 @@ PetscErrorCode read_data(PetscInt nc, PetscInt ngen, PetscInt nload, PetscInt nb
 
     Note: All loads have the same characteristic currently.
   */
-   PetscInt lbus[3] = {4,5,7};
+ //  PetscInt lbus[3] = {4,5,7};
    PetscScalar PD0[3] = {1.25,0.9,1.0};
    PetscScalar QD0[3] = {0.5,0.3,0.35};
    PetscInt    ld_nsegsp[3] = {3,3,3};
@@ -1232,11 +1238,12 @@ int main(int argc,char ** argv)
    //TSConvergedReason reason;
    //PetscBool alg_flg;
    //PetscScalar    ybusfault[18];
-   PetscInt    nc = 3;  // no. of copies 
+   PetscInt    nc = 1;  // Default no. of copies 
 
 
   
   ierr = PetscInitialize(&argc,&argv,"petscoptions",help);CHKERRQ(ierr);
+  ierr = PetscOptionsGetInt(NULL,NULL,"-nc",&nc,NULL);CHKERRQ(ierr);  // User defined no. of copies
   ierr = MPI_Comm_size(PETSC_COMM_WORLD,&size);CHKERRQ(ierr);
   ierr = MPI_Comm_rank(PETSC_COMM_WORLD,&rank);CHKERRQ(ierr);
   
@@ -1293,11 +1300,17 @@ int main(int argc,char ** argv)
   //ierr = PetscLogStageRegister("Create network",&stage1);CHKERRQ(ierr);
   //PetscLogStagePush(stage1);
   // /* Set number of nodes/edges */
+  if (!rank){
   ierr = DMNetworkSetSizes(networkdm,nbus*nc,nbranch*nc+(nc-1),PETSC_DETERMINE,PETSC_DETERMINE);CHKERRQ(ierr);
+  }
+  else{
+	 ierr = DMNetworkSetSizes(networkdm,0,0,PETSC_DETERMINE,PETSC_DETERMINE);CHKERRQ(ierr); 
+  }
 
   /* Add edge connectivity */
   ierr = DMNetworkSetEdgeList(networkdm,edgelist);CHKERRQ(ierr);
   /* Set up the network layout */
+  
    ierr = DMNetworkLayoutSetUp(networkdm);CHKERRQ(ierr);
   
   /* We don't use these data structures anymore since they have been copied to networkdm */
@@ -1362,7 +1375,10 @@ int main(int argc,char ** argv)
   ierr = DMCreateGlobalVector(networkdm,&X);CHKERRQ(ierr);
   ierr = DMCreateGlobalVector(networkdm,&Xdot);CHKERRQ(ierr);
   ierr = VecDuplicate(X,&F);CHKERRQ(ierr);
+  
+ 
   ierr = SetInitialGuess(networkdm, X); CHKERRQ(ierr);
+
   //VecView(X,PETSC_VIEWER_STDOUT_WORLD);
   
   ierr = PetscOptionsBegin(PETSC_COMM_WORLD,NULL,"Transient stability fault options","");CHKERRQ(ierr);
