@@ -17,6 +17,10 @@ include ${PETSC_DIR}/lib/petsc/conf/rules
 	-${CLINKER} -o 9bus_dm 9bus_dm.o  ${PETSC_TS_LIB}
 	${RM} 9bus_dm.o
 	
+new: new.o  chkopts
+	-${CLINKER} -o new new.o  ${PETSC_TS_LIB}
+	${RM} new.o    
+    
 9bus_dm1: 9bus_dm1.o  chkopts
 	-${CLINKER} -o 9bus_dm1 9bus_dm1.o  ${PETSC_TS_LIB}
 	${RM} 9bus_dm1.o
@@ -28,6 +32,10 @@ include ${PETSC_DIR}/lib/petsc/conf/rules
 9bus_dm1_l2: 9bus_dm1_l2.o  chkopts
 	-${CLINKER} -o 9bus_dm1_l2 9bus_dm1_l2.o  ${PETSC_TS_LIB}
 	${RM} 9bus_dm1_l2.o
+
+9bus_dm1_l2_new: 9bus_dm1_l2_new.o  chkopts
+	-${CLINKER} -o 9bus_dm1_l2_new 9bus_dm1_l2_new.o  ${PETSC_TS_LIB}
+	${RM} 9bus_dm1_l2_new.o
 	
 9bus_dm1_l2_temp: 9bus_dm1_l2_temp.o  chkopts
 	-${CLINKER} -o 9bus_dm1_l2_temp 9bus_dm1_l2_temp.o  ${PETSC_TS_LIB}
@@ -53,6 +61,10 @@ include ${PETSC_DIR}/lib/petsc/conf/rules
 	-${CLINKER} -o 9bus_dm1_fso 9bus_dm1_fso.o  ${PETSC_TS_LIB}
 	${RM} 9bus_dm1_fso.o
 
+9bus_dm1_fso_new: 9bus_dm1_fso_new.o  chkopts
+	-${CLINKER} -o 9bus_dm1_fso_new 9bus_dm1_fso_new.o  ${PETSC_TS_LIB}
+	${RM} 9bus_dm1_fso_new.o
+    
 9bus_dm1_fso1: 9bus_dm1_fso1.o  chkopts
 	-${CLINKER} -o 9bus_dm1_fso1 9bus_dm1_fso1.o  ${PETSC_TS_LIB}
 	${RM} 9bus_dm1_fso1.o
