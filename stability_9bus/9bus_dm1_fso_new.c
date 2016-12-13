@@ -1058,33 +1058,29 @@ PetscErrorCode AlgFunction (SNES snes, Vec X, Vec F, void *ctx) // the last argu
   
   }
   
- 
-
-
- #undef __FUNCT__
+#undef __FUNCT__
 #define __FUNCT__ "SetISFunction"
 PetscErrorCode SetISFunction (TS ts, IS *is_diff, IS *is_alg) {
 //PetscErrorCode SetISFunction (TS ts, PetscInt neqs_diff, PetscInt neqs_alg, IS *is_diff, IS *is_alg) {
- PetscErrorCode ierr;
+  PetscErrorCode ierr;
  
   DM             networkdm;
   PetscInt       v,vStart,vEnd;
   PetscInt       *indices_alg, *indices_diff;
   PetscInt        idx_net=0 , idx_gen = 0;
-  PetscInt        neqs_diff=0 , neqs_alg = 0;
-
+  PetscInt        neqs_diff=0 , neqs_alg = 0;  
+  PetscBool      ghost;
   
   PetscFunctionBegin;
- 
   ierr = TSGetDM(ts,&networkdm);CHKERRQ(ierr);
- 
   ierr = DMNetworkGetVertexRange(networkdm,&vStart,&vEnd);CHKERRQ(ierr); 
 
-
-for (v=vStart; v < vEnd; v++) { 
+  for (v=vStart; v<vEnd; v++) { 
     PetscInt    j, key;
     PetscInt    numComps,offsetd;
 	
+    ierr = DMNetworkIsGhostVertex(networkdm,v,&ghost);CHKERRQ(ierr);
+    if (ghost) continue;
     ierr = DMNetworkGetNumComponents(networkdm,v,&numComps);CHKERRQ(ierr); // Buses, branches, gen and loads are the components here.
 	//ierr = DMNetworkGetVariableGlobalOffset(networkdm,v,&goffset);  CHKERRQ(ierr);
     for (j=0;j<numComps;j++) {
@@ -1096,26 +1092,25 @@ for (v=vStart; v < vEnd; v++) {
             neqs_diff=neqs_diff+7;
         }     
     }
-}
+  }
 
   ierr = PetscMalloc1(neqs_diff,&indices_diff);CHKERRQ(ierr);
   ierr = PetscMalloc1(neqs_alg,&indices_alg);CHKERRQ(ierr);
 
 
-for (v=vStart; v < vEnd; v++) { // Vertices contain all the info about each component (bus, generator, branch and load)
+  for (v=vStart; v < vEnd; v++) { // Vertices contain all the info about each component (bus, generator, branch and load)
  
-   PetscInt    j,offsetd, key, goffset, goffset_gen;
-   
+    PetscInt    j,offsetd, key, goffset, goffset_gen;
     PetscInt    numComps;
 	
-    ierr = DMNetworkGetNumComponents(networkdm,v,&numComps);CHKERRQ(ierr); // Buses, branches, gen and loads are the components here.
-	ierr = DMNetworkGetVariableGlobalOffset(networkdm,v,&goffset);  CHKERRQ(ierr);
-	
+    ierr = DMNetworkIsGhostVertex(networkdm,v,&ghost);CHKERRQ(ierr);
+    if (!ghost) {
 
-	
-	
+    ierr = DMNetworkGetNumComponents(networkdm,v,&numComps);CHKERRQ(ierr); // Buses, branches, gen and loads are the components here.
+    ierr = DMNetworkGetVariableGlobalOffset(networkdm,v,&goffset);  CHKERRQ(ierr);
+		
     for (j = 0; j < numComps; j++) {
-        ierr = DMNetworkGetComponentTypeOffset(networkdm,v,j,&key,&offsetd);CHKERRQ(ierr);
+      ierr = DMNetworkGetComponentTypeOffset(networkdm,v,j,&key,&offsetd);CHKERRQ(ierr);
       if (key == 1) {  // bus structure
 	  
 	indices_alg[idx_net] = goffset;
@@ -1123,14 +1118,9 @@ for (v=vStart; v < vEnd; v++) { // Vertices contain all the info about each comp
 	indices_alg[idx_net] = goffset+1;
 	idx_net++;
 	
-   }
-   
-   else if (key == 2){
-	   
-	 
+      } else if (key == 2){
 	goffset_gen = goffset+2;
     
-	
 	indices_diff[idx_gen] = goffset_gen;
 	idx_gen++;
 	indices_diff[idx_gen] = goffset_gen+1;
@@ -1151,24 +1141,27 @@ for (v=vStart; v < vEnd; v++) { // Vertices contain all the info about each comp
 	idx_gen++;
 	indices_diff[idx_gen] = goffset_gen+8;
 	idx_gen++;
-	
-
-	}  
-   
-   
-	}
-   }
+      }  
+    }
+    }
+  }
 	  
-     ierr = ISCreateGeneral(PETSC_COMM_SELF,neqs_diff,indices_diff,PETSC_COPY_VALUES,is_diff);CHKERRQ(ierr);
-  ierr = ISCreateGeneral(PETSC_COMM_SELF,neqs_alg,indices_alg,PETSC_COPY_VALUES,is_alg);CHKERRQ(ierr);
+  IS is_diff_tmp,is_alg_tmp;
+  printf("neqs %d + %d = %d\n",neqs_diff,neqs_alg,neqs_diff+neqs_alg);
+  ierr = PetscSortInt(neqs_diff,indices_diff);CHKERRQ(ierr);
+  ierr = PetscSortInt(neqs_alg,indices_alg);CHKERRQ(ierr);
+ 
+  ierr = ISCreateGeneral(PETSC_COMM_SELF,neqs_diff,indices_diff,PETSC_COPY_VALUES,&is_diff_tmp);CHKERRQ(ierr);
+  ierr = ISCreateGeneral(PETSC_COMM_SELF,neqs_alg,indices_alg,PETSC_COPY_VALUES,&is_alg_tmp);CHKERRQ(ierr);
+  ISView(is_diff_tmp,PETSC_VIEWER_STDOUT_SELF);
+  ISView(is_alg_tmp,PETSC_VIEWER_STDOUT_SELF);
+  *is_diff = is_diff_tmp;
+  *is_alg  = is_alg_tmp;
    
   ierr = PetscFree(indices_alg);CHKERRQ(ierr);
   ierr = PetscFree(indices_diff);CHKERRQ(ierr);
- 
   PetscFunctionReturn(0);	
 }
-
-
 
 #undef __FUNCT__
 #define __FUNCT__ "main"
@@ -1365,7 +1358,7 @@ int main(int argc,char ** argv)
   /* Setup TS solver                                           */
   /*--------------------------------------------------------*/
   ierr = TSCreate(PETSC_COMM_WORLD,&ts);CHKERRQ(ierr);
-   ierr = TSSetDM(ts,(DM)networkdm);CHKERRQ(ierr);
+  ierr = TSSetDM(ts,(DM)networkdm);CHKERRQ(ierr);
   //ierr = TSSetProblemType(ts,TS_NONLINEAR);CHKERRQ(ierr);
   //ierr = TSSetEquationType(ts,TS_EQ_DAE_IMPLICIT_INDEX1);CHKERRQ(ierr);
   //ierr = TSARKIMEXSetFullyImplicit(ts,PETSC_TRUE);CHKERRQ(ierr);
@@ -1373,42 +1366,35 @@ int main(int argc,char ** argv)
   ierr = TSSetApplicationContext(ts,&user);CHKERRQ(ierr);
   ierr = TSSetType(ts,TSBEULER);CHKERRQ(ierr);
   ierr = TSSetIFunction(ts,NULL, (TSIFunction) FormIFunction,&user);CHKERRQ(ierr);
-   //VecView(F,PETSC_VIEWER_STDOUT_WORLD);
-   
-   
- /* Setup fieldsplit preconditioner                                           */
-  /*--------------------------------------------------------*/ 
-  
-  
+  //VecView(F,PETSC_VIEWER_STDOUT_WORLD);
    
   ierr = TSSetDuration(ts,1000,user.tfaulton);CHKERRQ(ierr);
   ierr = TSSetExactFinalTime(ts,TS_EXACTFINALTIME_STEPOVER);CHKERRQ(ierr);
   ierr = TSSetInitialTimeStep(ts,0.0,0.01);CHKERRQ(ierr);
   
-  //if (!rank) {
-     ierr = SetISFunction(ts,&is_diff, &is_alg); CHKERRQ(ierr);
-	 ierr = TSGetSNES(ts,&snes_alg);CHKERRQ(ierr);
-	 ierr = SNESGetKSP(snes_alg,&ksp_A);CHKERRQ(ierr);
-	 ierr = KSPGetPC(ksp_A,&pc_A);CHKERRQ(ierr);
-	 ierr = PCSetType(pc_A,PCFIELDSPLIT);CHKERRQ(ierr);
-     ierr = PCFieldSplitSetBlockSize(pc_A,2);CHKERRQ(ierr);
+  /* Setup fieldsplit preconditioner                        */
+  /*--------------------------------------------------------*/
+  /* Get is_diff and is_alg */
+  ierr = SetISFunction(ts,&is_diff, &is_alg);CHKERRQ(ierr);
+  ierr = TSGetSNES(ts,&snes_alg);CHKERRQ(ierr);
+  ierr = SNESGetKSP(snes_alg,&ksp_A);CHKERRQ(ierr);
+  ierr = KSPGetPC(ksp_A,&pc_A);CHKERRQ(ierr);
+  ierr = PCSetType(pc_A,PCFIELDSPLIT);CHKERRQ(ierr);
+  ierr = PCFieldSplitSetBlockSize(pc_A,2);CHKERRQ(ierr);
    
-	 ierr = PCFieldSplitSetIS(pc_A,"algebraic", is_alg);CHKERRQ(ierr);//"_fieldsplit_algebraic_"
-     ierr = PCFieldSplitSetIS(pc_A,"differential", is_diff);CHKERRQ(ierr);//"_fieldsplit_differential_"
-
-	 ierr = KSPSetFromOptions(ksp_A);CHKERRQ(ierr); 
-   //}
-   
-   //ierr = MPI_Barrier(PETSC_COMM_WORLD);CHKERRQ(ierr);
+  ierr = PCFieldSplitSetIS(pc_A,"algebraic", is_alg);CHKERRQ(ierr);//"_fieldsplit_algebraic_"
+  ierr = PCFieldSplitSetIS(pc_A,"differential", is_diff);CHKERRQ(ierr);//"_fieldsplit_differential_"
+  ierr = KSPSetFromOptions(ksp_A);CHKERRQ(ierr);   
+  //ierr = MPI_Barrier(PETSC_COMM_WORLD);CHKERRQ(ierr);
    
   ierr = TSSetFromOptions(ts);CHKERRQ(ierr);
   //ierr = TSSetPostStep(ts,SaveSolution);CHKERRQ(ierr);// do the save solution
 
-  
   user.alg_flg = PETSC_FALSE;
   /* Prefault period */
-   ierr = TSSolve(ts,X);CHKERRQ(ierr);
-   //VecView(X,PETSC_VIEWER_STDOUT_WORLD);
+  if (!rank) ierr = PetscPrintf(PETSC_COMM_SELF,"... Prefault period ...\n");CHKERRQ(ierr);
+  ierr = TSSolve(ts,X);CHKERRQ(ierr);
+  //VecView(X,PETSC_VIEWER_STDOUT_WORLD);
   // ierr = TSGetConvergedReason(ts,&reason);CHKERRQ(ierr);
   
   
@@ -1420,8 +1406,8 @@ int main(int argc,char ** argv)
   */
 
   ierr = VecDuplicate(X,&F_alg);CHKERRQ(ierr);
-   ierr = TSGetSNES(ts,&snes_alg);CHKERRQ(ierr);
-   ierr = SNESSetFunction(snes_alg,F_alg,AlgFunction,&user);CHKERRQ(ierr);
+  ierr = TSGetSNES(ts,&snes_alg);CHKERRQ(ierr);
+  ierr = SNESSetFunction(snes_alg,F_alg,AlgFunction,&user);CHKERRQ(ierr);
  //ierr = MatZeroEntries(J);CHKERRQ(ierr);
  //ierr = SNESSetJacobian(snes_alg,J,J,AlgJacobian,&user);CHKERRQ(ierr);
   ierr = SNESSetOptionsPrefix(snes_alg,"alg_");CHKERRQ(ierr);
@@ -1461,11 +1447,9 @@ int main(int argc,char ** argv)
      // ierr = PCFieldSplitSetIS(pc_A,"differential", is_diff);CHKERRQ(ierr);//"_fieldsplit_differential_"
 
 	 // ierr = KSPSetFromOptions(ksp_A);CHKERRQ(ierr); 
-  
+  if (!rank) ierr = PetscPrintf(PETSC_COMM_SELF,"\n... snes_alg solve ...\n");CHKERRQ(ierr);
   ierr = SNESSolve(snes_alg,NULL,X);CHKERRQ(ierr);
   //VecView(X,PETSC_VIEWER_STDOUT_WORLD);
-  
- 
   
   /* Disturbance period */
   ierr = TSSetDuration(ts,1000,user.tfaultoff);CHKERRQ(ierr);
@@ -1474,7 +1458,7 @@ int main(int argc,char ** argv)
   ierr = TSSetIFunction(ts,NULL, (TSIFunction) FormIFunction,&user);CHKERRQ(ierr);
   
   user.alg_flg = PETSC_TRUE;
-   
+  if (!rank) ierr = PetscPrintf(PETSC_COMM_SELF,"... Disturbance period ...\n");CHKERRQ(ierr);
   ierr = TSSolve(ts,X);CHKERRQ(ierr);
   //VecView(X,PETSC_VIEWER_STDOUT_WORLD);
    
@@ -1486,8 +1470,8 @@ int main(int argc,char ** argv)
   ierr = SNESSetFromOptions(snes_alg);CHKERRQ(ierr);
 
   user.alg_flg = PETSC_FALSE;
- 
-  // /* Solve the algebraic equations */
+  /* Solve the algebraic equations */
+  if (!rank) ierr = PetscPrintf(PETSC_COMM_SELF,"\n... snes_alg solve ...\n");CHKERRQ(ierr);
   ierr = SNESSolve(snes_alg,NULL,X);CHKERRQ(ierr);
   //VecView(X,PETSC_VIEWER_STDOUT_WORLD);
   
@@ -1500,7 +1484,7 @@ int main(int argc,char ** argv)
   ierr = TSSetIFunction(ts,NULL, (TSIFunction) FormIFunction,&user);CHKERRQ(ierr);
 
   user.alg_flg = PETSC_FALSE;
-
+  if (!rank) ierr = PetscPrintf(PETSC_COMM_SELF,"... Post-disturbance period ...\n");CHKERRQ(ierr);
   ierr = TSSolve(ts,X);CHKERRQ(ierr);
   //VecView(X,PETSC_VIEWER_STDOUT_WORLD);
    
