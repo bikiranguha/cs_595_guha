@@ -36,7 +36,12 @@ new: new.o  chkopts
 9bus_dm1_l2_new: 9bus_dm1_l2_new.o  chkopts
 	-${CLINKER} -o 9bus_dm1_l2_new 9bus_dm1_l2_new.o  ${PETSC_TS_LIB}
 	${RM} 9bus_dm1_l2_new.o
+       
 	
+9bus_dm1_fso_new: 9bus_dm1_fso_new.o  chkopts
+	-${CLINKER} -o 9bus_dm1_fso_new 9bus_dm1_fso_new.o  ${PETSC_TS_LIB}
+	${RM} 9bus_dm1_fso_new.o
+    
 9bus_dm1_l2_temp: 9bus_dm1_l2_temp.o  chkopts
 	-${CLINKER} -o 9bus_dm1_l2_temp 9bus_dm1_l2_temp.o  ${PETSC_TS_LIB}
 	${RM} 9bus_dm1_l2_temp.o

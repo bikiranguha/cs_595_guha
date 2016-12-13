@@ -1202,8 +1202,8 @@ int main(int argc,char ** argv)
 
 
   
-  //ierr = PetscInitialize(&argc,&argv,"petscoptions_fso",help);CHKERRQ(ierr);
   ierr = PetscInitialize(&argc,&argv,"petscoptions_fso",help);CHKERRQ(ierr);
+  //ierr = PetscInitialize(&argc,&argv,"petscoptions",help);CHKERRQ(ierr);
   ierr = MPI_Comm_size(PETSC_COMM_WORLD,&size);CHKERRQ(ierr);
   ierr = MPI_Comm_rank(PETSC_COMM_WORLD,&rank);CHKERRQ(ierr);
   
