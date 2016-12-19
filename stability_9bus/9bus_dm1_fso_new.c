@@ -1070,8 +1070,12 @@ PetscErrorCode SetISFunction (TS ts, IS *is_diff, IS *is_alg) {
   PetscInt        idx_net=0 , idx_gen = 0;
   PetscInt        neqs_diff=0 , neqs_alg = 0;  
   PetscBool      ghost;
+  MPI_Comm       comm;
+  PetscMPIInt    rank;
   
   PetscFunctionBegin;
+  ierr = PetscObjectGetComm((PetscObject)ts,&comm);CHKERRQ(ierr);
+  ierr = MPI_Comm_rank(comm,&rank);CHKERRQ(ierr);
   ierr = TSGetDM(ts,&networkdm);CHKERRQ(ierr);
   ierr = DMNetworkGetVertexRange(networkdm,&vStart,&vEnd);CHKERRQ(ierr); 
 
@@ -1080,7 +1084,7 @@ PetscErrorCode SetISFunction (TS ts, IS *is_diff, IS *is_alg) {
     PetscInt    numComps,offsetd;
 	
     ierr = DMNetworkIsGhostVertex(networkdm,v,&ghost);CHKERRQ(ierr);
-    if (ghost) continue;
+    if (!ghost) {
     ierr = DMNetworkGetNumComponents(networkdm,v,&numComps);CHKERRQ(ierr); // Buses, branches, gen and loads are the components here.
 	//ierr = DMNetworkGetVariableGlobalOffset(networkdm,v,&goffset);  CHKERRQ(ierr);
     for (j=0;j<numComps;j++) {
@@ -1091,6 +1095,7 @@ PetscErrorCode SetISFunction (TS ts, IS *is_diff, IS *is_alg) {
             neqs_alg=neqs_alg+2;
             neqs_diff=neqs_diff+7;
         }     
+    }
     }
   }
 
@@ -1147,14 +1152,16 @@ PetscErrorCode SetISFunction (TS ts, IS *is_diff, IS *is_alg) {
   }
 	  
   IS is_diff_tmp,is_alg_tmp;
-  printf("neqs %d + %d = %d\n",neqs_diff,neqs_alg,neqs_diff+neqs_alg);
-  ierr = PetscSortInt(neqs_diff,indices_diff);CHKERRQ(ierr);
-  ierr = PetscSortInt(neqs_alg,indices_alg);CHKERRQ(ierr);
+  printf("[%d] neqs %d + %d = %d\n",rank,neqs_diff,neqs_alg,neqs_diff+neqs_alg);
+  //ierr = PetscSortInt(neqs_diff,indices_diff);CHKERRQ(ierr);
+  //ierr = PetscSortInt(neqs_alg,indices_alg);CHKERRQ(ierr);
  
   ierr = ISCreateGeneral(PETSC_COMM_SELF,neqs_diff,indices_diff,PETSC_COPY_VALUES,&is_diff_tmp);CHKERRQ(ierr);
   ierr = ISCreateGeneral(PETSC_COMM_SELF,neqs_alg,indices_alg,PETSC_COPY_VALUES,&is_alg_tmp);CHKERRQ(ierr);
-  ISView(is_diff_tmp,PETSC_VIEWER_STDOUT_SELF);
-  ISView(is_alg_tmp,PETSC_VIEWER_STDOUT_SELF);
+  ierr = ISSort(is_diff_tmp);CHKERRQ(ierr);
+  ierr = ISSort(is_alg_tmp);CHKERRQ(ierr);
+  //ISView(is_diff_tmp,PETSC_VIEWER_STDOUT_SELF);
+  //ISView(is_alg_tmp,PETSC_VIEWER_STDOUT_SELF);
   *is_diff = is_diff_tmp;
   *is_alg  = is_alg_tmp;
    
@@ -1371,7 +1378,7 @@ int main(int argc,char ** argv)
   ierr = TSSetDuration(ts,1000,user.tfaulton);CHKERRQ(ierr);
   ierr = TSSetExactFinalTime(ts,TS_EXACTFINALTIME_STEPOVER);CHKERRQ(ierr);
   ierr = TSSetInitialTimeStep(ts,0.0,0.01);CHKERRQ(ierr);
-  
+#if 0  
   /* Setup fieldsplit preconditioner                        */
   /*--------------------------------------------------------*/
   /* Get is_diff and is_alg */
@@ -1384,15 +1391,17 @@ int main(int argc,char ** argv)
    
   ierr = PCFieldSplitSetIS(pc_A,"algebraic", is_alg);CHKERRQ(ierr);//"_fieldsplit_algebraic_"
   ierr = PCFieldSplitSetIS(pc_A,"differential", is_diff);CHKERRQ(ierr);//"_fieldsplit_differential_"
-  ierr = KSPSetFromOptions(ksp_A);CHKERRQ(ierr);   
+  ierr = ISDestroy(&is_diff);CHKERRQ(ierr);
+  ierr = ISDestroy(&is_alg);CHKERRQ(ierr);
+  //ierr = KSPSetFromOptions(ksp_A);CHKERRQ(ierr);   
   //ierr = MPI_Barrier(PETSC_COMM_WORLD);CHKERRQ(ierr);
-   
+#endif   
   ierr = TSSetFromOptions(ts);CHKERRQ(ierr);
   //ierr = TSSetPostStep(ts,SaveSolution);CHKERRQ(ierr);// do the save solution
 
   user.alg_flg = PETSC_FALSE;
-  /* Prefault period */
-  if (!rank) ierr = PetscPrintf(PETSC_COMM_SELF,"... Prefault period ...\n");CHKERRQ(ierr);
+  /* Prefult period */
+  if (!rank) ierr = PetscPrintf(PETSC_COMM_SELF,"\n... Prefault period ...\n");CHKERRQ(ierr);
   ierr = TSSolve(ts,X);CHKERRQ(ierr);
   //VecView(X,PETSC_VIEWER_STDOUT_WORLD);
   // ierr = TSGetConvergedReason(ts,&reason);CHKERRQ(ierr);
@@ -1404,13 +1413,13 @@ int main(int argc,char ** argv)
      variables are held constant by setting their residuals to 0 and
      putting a 1 on the Jacobian diagonal for xgen rows
   */
-
   ierr = VecDuplicate(X,&F_alg);CHKERRQ(ierr);
+#if 0
   ierr = TSGetSNES(ts,&snes_alg);CHKERRQ(ierr);
   ierr = SNESSetFunction(snes_alg,F_alg,AlgFunction,&user);CHKERRQ(ierr);
  //ierr = MatZeroEntries(J);CHKERRQ(ierr);
  //ierr = SNESSetJacobian(snes_alg,J,J,AlgJacobian,&user);CHKERRQ(ierr);
-  ierr = SNESSetOptionsPrefix(snes_alg,"alg_");CHKERRQ(ierr);
+  //ierr = SNESSetOptionsPrefix(snes_alg,"prefaultsnes_");CHKERRQ(ierr);
   
     // if (!rank) {
      // ierr = SetISFunction(ts, neqs_diff, neqs_alg, &is_diff, &is_alg); CHKERRQ(ierr);
@@ -1429,8 +1438,6 @@ int main(int argc,char ** argv)
    //ierr = MPI_Barrier(PETSC_COMM_WORLD);CHKERRQ(ierr);
   ierr = SNESSetFromOptions(snes_alg);CHKERRQ(ierr);
   
-  
-  
  /* Apply disturbance - resistive fault at user.faultbus */
   /* This is done by adding shunt conductance to the diagonal location
      in the Ybus matrix */
@@ -1447,10 +1454,10 @@ int main(int argc,char ** argv)
      // ierr = PCFieldSplitSetIS(pc_A,"differential", is_diff);CHKERRQ(ierr);//"_fieldsplit_differential_"
 
 	 // ierr = KSPSetFromOptions(ksp_A);CHKERRQ(ierr); 
-  if (!rank) ierr = PetscPrintf(PETSC_COMM_SELF,"\n... snes_alg solve ...\n");CHKERRQ(ierr);
+  if (!rank) ierr = PetscPrintf(PETSC_COMM_SELF,"\n... prefault snes_alg solve ...\n");CHKERRQ(ierr);
   ierr = SNESSolve(snes_alg,NULL,X);CHKERRQ(ierr);
   //VecView(X,PETSC_VIEWER_STDOUT_WORLD);
-  
+#endif  
   /* Disturbance period */
   ierr = TSSetDuration(ts,1000,user.tfaultoff);CHKERRQ(ierr);
   ierr = TSSetExactFinalTime(ts,TS_EXACTFINALTIME_STEPOVER);CHKERRQ(ierr);
@@ -1458,23 +1465,24 @@ int main(int argc,char ** argv)
   ierr = TSSetIFunction(ts,NULL, (TSIFunction) FormIFunction,&user);CHKERRQ(ierr);
   
   user.alg_flg = PETSC_TRUE;
-  if (!rank) ierr = PetscPrintf(PETSC_COMM_SELF,"... Disturbance period ...\n");CHKERRQ(ierr);
+  if (!rank) ierr = PetscPrintf(PETSC_COMM_SELF,"\n... Disturbance period ...\n");CHKERRQ(ierr);
   ierr = TSSolve(ts,X);CHKERRQ(ierr);
   //VecView(X,PETSC_VIEWER_STDOUT_WORLD);
-   
+#if 0   
   /* Remove the fault */
   ierr = SNESSetFunction(snes_alg,F_alg,AlgFunction,&user);CHKERRQ(ierr);
   //ierr = MatZeroEntries(J);CHKERRQ(ierr);
   //ierr = SNESSetJacobian(snes_alg,J,J,AlgJacobian,&user);CHKERRQ(ierr);
-  ierr = SNESSetOptionsPrefix(snes_alg,"alg_");CHKERRQ(ierr);
+  //ierr = SNESSetOptionsPrefix(snes_alg,"alg_");CHKERRQ(ierr);
+  ierr = SNESSetOptionsPrefix(snes_alg,"afterfaultsnes_");CHKERRQ(ierr);
   ierr = SNESSetFromOptions(snes_alg);CHKERRQ(ierr);
 
   user.alg_flg = PETSC_FALSE;
   /* Solve the algebraic equations */
-  if (!rank) ierr = PetscPrintf(PETSC_COMM_SELF,"\n... snes_alg solve ...\n");CHKERRQ(ierr);
+  if (!rank) ierr = PetscPrintf(PETSC_COMM_SELF,"\n... postfault snes_alg solve ...\n");CHKERRQ(ierr);
   ierr = SNESSolve(snes_alg,NULL,X);CHKERRQ(ierr);
   //VecView(X,PETSC_VIEWER_STDOUT_WORLD);
-  
+#endif  
 
   
   /* Post-disturbance period */
@@ -1484,7 +1492,7 @@ int main(int argc,char ** argv)
   ierr = TSSetIFunction(ts,NULL, (TSIFunction) FormIFunction,&user);CHKERRQ(ierr);
 
   user.alg_flg = PETSC_FALSE;
-  if (!rank) ierr = PetscPrintf(PETSC_COMM_SELF,"... Post-disturbance period ...\n");CHKERRQ(ierr);
+  if (!rank) ierr = PetscPrintf(PETSC_COMM_SELF,"\n... Post-disturbance period ...\n");CHKERRQ(ierr);
   ierr = TSSolve(ts,X);CHKERRQ(ierr);
   //VecView(X,PETSC_VIEWER_STDOUT_WORLD);
    
@@ -1497,8 +1505,8 @@ int main(int argc,char ** argv)
    if (rank == 0){
    ierr = MatDestroy(&Ybus);CHKERRQ(ierr);
    ierr = VecDestroy(&V0);CHKERRQ(ierr);
-   ierr=ISDestroy(&is_diff);CHKERRQ(ierr);
-   ierr=ISDestroy(&is_alg);CHKERRQ(ierr);
+   //ierr=ISDestroy(&is_diff);CHKERRQ(ierr);
+   //ierr=ISDestroy(&is_alg);CHKERRQ(ierr);
    }
   // ierr = MatDestroy(&J);CHKERRQ(ierr);
   ierr = DMDestroy(&networkdm);CHKERRQ(ierr);
